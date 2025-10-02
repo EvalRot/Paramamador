@@ -21,6 +21,7 @@ public class Settings {
 
     private volatile Path exportDir = Paths.get(System.getProperty("user.home"), ".paramamador");
     private volatile boolean overwriteOnSave = true;
+    private volatile String snapshotNamePrefix = null; // optional user-provided base name for JSON filenames
 
     public boolean isScopeOnly() { return scopeOnly; }
     public void setScopeOnly(boolean scopeOnly) { this.scopeOnly = scopeOnly; }
@@ -46,5 +47,8 @@ public class Settings {
 
     public boolean isOverwriteOnSave() { return overwriteOnSave; }
     public void setOverwriteOnSave(boolean overwriteOnSave) { this.overwriteOnSave = overwriteOnSave; }
-}
 
+    public String getSnapshotNamePrefix() { return snapshotNamePrefix; }
+    public void setSnapshotNamePrefix(String prefix) { this.snapshotNamePrefix = (prefix == null || prefix.isBlank()) ? null : prefix; }
+
+}

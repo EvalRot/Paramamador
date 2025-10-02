@@ -25,6 +25,8 @@ import burp.paramamador.util.IOUtils;
 import javax.swing.*;
 import java.awt.*;
 import java.time.Instant;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -81,8 +83,22 @@ public class Extension implements BurpExtension {
             return t;
         });
 
+        // Initial user setup (export dir, filename base)
+        try {
+            showInitialSetupDialog();
+        } catch (Throwable t) {
+            log.logToError("Initial setup dialog failed: " + t.getMessage());
+        }
+
         // Start scheduled autosave
         scheduler.scheduleAtFixedRate(this::saveAllSafe, settings.getAutoSaveSeconds(), settings.getAutoSaveSeconds(), TimeUnit.SECONDS);
+
+        // Create startup snapshot files with project name + timestamp or user-provided base
+        try {
+            createStartupSnapshots();
+        } catch (Throwable t) {
+            log.logToError("Startup snapshot creation failed: " + t.getMessage());
+        }
 
         // Periodically refresh UI so new data appears in tables
         scheduler.scheduleAtFixedRate(() -> {
@@ -93,7 +109,7 @@ public class Extension implements BurpExtension {
             } catch (Throwable t) {
                 log.logToError("UI refresh error: " + t.getMessage());
             }
-        }, 2, 2, TimeUnit.SECONDS);
+        }, 15, 15, TimeUnit.SECONDS);
 
         // Build UI
         this.tab = new ParamamadorTab(store, settings, () -> {
@@ -167,6 +183,108 @@ public class Extension implements BurpExtension {
             log.logToError("Save failed: " + t.getMessage());
         }
     }
+
+    private void createStartupSnapshots() {
+        try {
+            IOUtils.ensureDir(settings.getExportDir());
+        } catch (java.io.IOException ioe) {
+            throw new RuntimeException(ioe);
+        }
+        String base = settings.getSnapshotNamePrefix();
+        if (base == null || base.isBlank()) base = safeProjectName();
+        String ts = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        java.nio.file.Path params = settings.getExportDir().resolve("paramamador_" + base + "_" + ts + "_parameters.json");
+        java.nio.file.Path endpoints = settings.getExportDir().resolve("paramamador_" + base + "_" + ts + "_endpoints.json");
+        try {
+            store.saveToDisk(params, endpoints);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void showInitialSetupDialog() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                JTextField nameField = new JTextField();
+                String suggested = safeProjectName();
+                if (settings.getSnapshotNamePrefix() != null && !settings.getSnapshotNamePrefix().isBlank()) {
+                    suggested = settings.getSnapshotNamePrefix();
+                }
+                nameField.setText(suggested);
+
+                JTextField dirField = new JTextField(settings.getExportDir().toString(), 30);
+                JButton browse = new JButton("Browse...");
+                browse.addActionListener(e -> {
+                    JFileChooser fc = new JFileChooser();
+                    fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                    try { fc.setCurrentDirectory(settings.getExportDir().toFile()); } catch (Throwable ignored) {}
+                    int res = fc.showOpenDialog(null);
+                    if (res == JFileChooser.APPROVE_OPTION && fc.getSelectedFile() != null) {
+                        dirField.setText(fc.getSelectedFile().getAbsolutePath());
+                    }
+                });
+
+                JPanel panel = new JPanel(new GridBagLayout());
+                GridBagConstraints c = new GridBagConstraints();
+                c.insets = new Insets(4,4,4,4);
+                c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1;
+                int row = 0;
+                c.gridx = 0; c.gridy = row; panel.add(new JLabel("Filename base"), c);
+                c.gridx = 1; panel.add(nameField, c); row++;
+                c.gridx = 0; c.gridy = row; panel.add(new JLabel("Export directory"), c);
+                JPanel dirPanel = new JPanel(new BorderLayout());
+                dirPanel.add(dirField, BorderLayout.CENTER);
+                dirPanel.add(browse, BorderLayout.EAST);
+                c.gridx = 1; panel.add(dirPanel, c); row++;
+
+                int option = JOptionPane.showConfirmDialog(null, panel, "Paramamador Setup", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+                if (option == JOptionPane.OK_OPTION) {
+                    String baseName = nameField.getText();
+                    if (baseName != null && !baseName.isBlank()) settings.setSnapshotNamePrefix(baseName.trim());
+                    String dir = dirField.getText();
+                    if (dir != null && !dir.isBlank()) settings.setExportDir(java.nio.file.Paths.get(dir.trim()));
+                }
+            } catch (Throwable t) {
+                log.logToError("Setup dialog error: " + t.getMessage());
+            }
+        });
+    }
+
+    private String safeProjectName() {
+        // 1) Try a system property if present (no official Montoya API for project name)
+        String name = null;
+        try { name = System.getProperty("burp.project.name"); } catch (Throwable ignored) {}
+        if (name != null && !name.isBlank()) {
+            return name.replaceAll("[^A-Za-z0-9_-]", "_");
+        }
+
+        // 2) Use first in-scope domain from Site Map
+        try {
+            if (siteMap != null && scope != null) {
+                for (var rr : siteMap.requestResponses()) {
+                    try {
+                        var req = rr.request();
+                        if (req == null) continue;
+                        String url = req.url();
+                        if (url == null || url.isBlank()) continue;
+                        if (!scope.isInScope(url)) continue;
+                        try {
+                            java.net.URI uri = java.net.URI.create(url);
+                            String host = uri.getHost();
+                            if (host != null && !host.isBlank()) {
+                                return host.replaceAll("[^A-Za-z0-9._-]", "_");
+                            }
+                        } catch (Throwable ignored) {}
+                    } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // 3) Fallback
+        return "burp";
+    }
+
+    
 
     /** Simple background JS analysis task */
     private record JsTask(String sourceUrl, String referer, String body, boolean inScope) {}

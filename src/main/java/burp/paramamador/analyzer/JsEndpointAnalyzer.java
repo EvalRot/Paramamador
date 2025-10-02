@@ -39,9 +39,9 @@ public class JsEndpointAnalyzer {
             + "(?:\\\"|')"
     );
     private static final Pattern TEMPLATE = Pattern.compile("`([^`]+)`");
-    // Require a slash in the string literal to reduce noise from non-path concatenations
-    private static final Pattern CONCAT_A = Pattern.compile("\"(?=[^\\\"]*/)([^\\\"]*)\"\\s*\\+\\s*([A-Za-z0-9_\\$\\.]+)");
-    private static final Pattern CONCAT_B = Pattern.compile("([A-Za-z0-9_\\$\\.]+)\\s*\\+\\s*\"(?=[^\\\"]*/)([^\\\"]*)\"");
+    // Require a slash AND at least one alphanumeric in the string literal to reduce noise
+    private static final Pattern CONCAT_A = Pattern.compile("\"(?=[^\\\"]*/)(?=[^\\\"]*[A-Za-z0-9])([^\\\"]*)\"\\s*\\+\\s*([A-Za-z0-9_\\$\\.]+)");
+    private static final Pattern CONCAT_B = Pattern.compile("([A-Za-z0-9_\\$\\.]+)\\s*\\+\\s*\"(?=[^\\\"]*/)(?=[^\\\"]*[A-Za-z0-9])([^\\\"]*)\"");
 
     public JsEndpointAnalyzer(DataStore store, Settings settings, Scope scope, Logging log) {
         this.store = store;
@@ -59,7 +59,7 @@ public class JsEndpointAnalyzer {
         while (m.find()) {
             String url = m.group(1);
             boolean inScope = inScopeHint || isInScope(url) || isRefererInScope(referer);
-            addEndpoint(url, EndpointRecord.Type.ABSOLUTE, inScope, sourceUrl, context(js, m.start(), m.end()), FULL_URL.pattern());
+            addEndpoint(url, EndpointRecord.Type.ABSOLUTE, inScope, sourceUrl, context(js, m.start(), m.end()), FULL_URL.pattern(), false);
         }
 
         // Absolute paths
@@ -67,7 +67,7 @@ public class JsEndpointAnalyzer {
         while (m.find()) {
             String path = m.group(1);
             boolean inScope = inScopeHint || isRefererInScope(referer);
-            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), ABS_PATH.pattern());
+            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), ABS_PATH.pattern(), false);
         }
 
         // Relative paths
@@ -75,7 +75,7 @@ public class JsEndpointAnalyzer {
         while (m.find()) {
             String path = m.group(1);
             boolean inScope = inScopeHint || isRefererInScope(referer);
-            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), REL_PATH.pattern());
+            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), REL_PATH.pattern(), false);
         }
 
         // Template literals: replace ${...} with EXPR
@@ -86,12 +86,14 @@ public class JsEndpointAnalyzer {
             // Look for urls/paths inside
             Matcher innerUrl = FULL_URL.matcher(masked);
             while (innerUrl.find()) {
+                // Provide original (unmasked) template content as context snippet
                 addEndpoint(innerUrl.group(1), EndpointRecord.Type.TEMPLATE, inScopeHint || isRefererInScope(referer), sourceUrl,
-                        context(masked, innerUrl.start(1), innerUrl.end(1)), FULL_URL.pattern());
+                        tpl, FULL_URL.pattern(), false);
             }
             if (masked.startsWith("/")) {
+                // Provide original (unmasked) template content as context snippet
                 addEndpoint(masked, EndpointRecord.Type.TEMPLATE, inScopeHint || isRefererInScope(referer), sourceUrl,
-                        context(masked, 0, masked.length()), TEMPLATE.pattern());
+                        tpl, TEMPLATE.pattern(), false);
             }
         }
 
@@ -99,12 +101,23 @@ public class JsEndpointAnalyzer {
         for (Pattern p : List.of(CONCAT_A, CONCAT_B)) {
             m = p.matcher(js);
             while (m.find()) {
-                String left = m.group(1);
-                String right = m.groupCount() >= 2 ? m.group(2) : "";
-                String candidate = (p == CONCAT_A ? left + "EXPR" : "EXPR" + right);
+                String candidate;
+                boolean suspiciousLiteral = false;
+                if (p == CONCAT_A) {
+                    String left = m.group(1);      // string literal content
+                    String var = m.group(2);       // variable/expression token
+                    candidate = left + var;        // keep variable name as-is (no EXPR masking)
+                    // If the literal part contains any of () $ ' + , @ ~ < > & = then mark as not-sure
+                    if (left != null && left.matches(".*[\u0028\u0029\u0024\u0027\u002B\u002C\u0040\u007E\u003C\u003E\u0026\u003D].*")) suspiciousLiteral = true;
+                } else { // CONCAT_B
+                    String var = m.group(1);       // variable/expression token
+                    String right = m.group(2);     // string literal content
+                    candidate = var + right;       // keep variable name as-is (no EXPR masking)
+                    if (right != null && right.matches(".*[\u0028\u0029\u0024\u0027\u002B\u002C\u0040\u007E\u003C\u003E\u0026\u003D].*")) suspiciousLiteral = true;
+                }
                 if (!candidate.isBlank()) {
-                    EndpointRecord.Type type = candidate.startsWith("/") ? EndpointRecord.Type.RELATIVE : EndpointRecord.Type.TEMPLATE;
-                    addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()), p.pattern());
+                    EndpointRecord.Type type = candidate.startsWith("/") ? EndpointRecord.Type.RELATIVE : EndpointRecord.Type.CONCAT;
+                    addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()), p.pattern(), suspiciousLiteral);
                 }
             }
         }
@@ -136,11 +149,11 @@ public class JsEndpointAnalyzer {
         }
     }
 
-    private void addEndpoint(String value, EndpointRecord.Type type, boolean inScope, String source, String ctx, String pattern) {
+    private void addEndpoint(String value, EndpointRecord.Type type, boolean inScope, String source, String ctx, String pattern, boolean extraNotSure) {
         boolean notSure = false;
         try {
             // Rule 1: for ABS_PATH/REL_PATH derived (type RELATIVE and pattern equals ABS_PATH|REL_PATH),
-            // if path contains any of: () $ ' + ~
+            // if path contains any of: () $ ' + , @ ~ < > & =
             boolean fromRelPatterns = type == EndpointRecord.Type.RELATIVE
                     && pattern != null
                     && (pattern.equals(ABS_PATH.pattern()) || pattern.equals(REL_PATH.pattern()));
@@ -148,13 +161,17 @@ public class JsEndpointAnalyzer {
                 String pathOnly = value;
                 int qpos = pathOnly.indexOf('?');
                 if (qpos >= 0) pathOnly = pathOnly.substring(0, qpos);
-                if (pathOnly.matches(".*[\u0028\u0029\u0024'\u002B~].*")) { // ( ) $ ' + ~
+                if (pathOnly.matches(".*[\u0028\u0029\u0024\u0027\u002B\u002C\u0040\u007E\u003C\u003E\u0026\u003D].*")) { // ( ) $ ' + , @ ~ < > & =
                     notSure = true;
                 }
             }
 
             // Rule 2: endpoints with no alphanumeric characters at all
             if (value != null && !value.isEmpty() && !value.matches(".*[A-Za-z0-9].*")) {
+                notSure = true;
+            }
+            // Rule 3: suspicious literal in CONCAT patterns
+            if (extraNotSure) {
                 notSure = true;
             }
         } catch (Throwable ignored) {}
