@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.paramamador</groupId>
+    <artifactId>paramamador</artifactId>
+    <version>0.1.0</version>
+    <name>Paramamador</name>
+    <description>Burp Suite Pro extension (Montoya API): parameter and endpoint aggregator</description>
+    <url>https://example.invalid/paramamador</url>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <shade.plugin.version>3.5.0</shade.plugin.version>
+        <gson.version>2.10.1</gson.version>
+        <!-- Montoya API version used by this template. You can change to match your SDK. -->
+        <montoya.version>2025.8</montoya.version>
+        <!-- Build jar name without version to simplify loading in Burp -->
+        <finalJarName>paramamador</finalJarName>
+    </properties>
+
+    <dependencies>
+        <!-- Montoya API is provided by Burp at runtime; do NOT bundle it. -->
+        <!-- Option A (recommended): resolve from Maven Central if available for your Burp version. -->
+        <dependency>
+            <groupId>net.portswigger.burp.extensions</groupId>
+            <artifactId>montoya-api</artifactId>
+            <version>${montoya.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- Option B: If building offline with a local Montoya JAR, install it to your local repo:
+             mvn install:install-file -Dfile=/path/to/montoya-api.jar -DgroupId=net.portswigger.burp.extensions \
+                 -DartifactId=montoya-api -Dversion=${montoya.version} -Dpackaging=jar
+             Then keep the dependency above unchanged. -->
+
+        <!-- Gson is shaded into the final jar so the extension works when loaded in Burp. -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>${gson.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>${finalJarName}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>${maven.compiler.source}</release>
+                    <includes>
+                        <include>burp/paramamador/**/*.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+
+            <!-- Shade third-party deps (Gson) into the output jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${shade.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <relocations>
+                                <!-- Relocate Gson to avoid potential conflicts with other extensions -->
+                                <relocation>
+                                    <pattern>com.google.gson</pattern>
+                                    <shadedPattern>com.paramamador.shaded.gson</shadedPattern>
+                                </relocation>
+                            </relocations>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
