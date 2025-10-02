@@ -25,11 +25,23 @@ public class JsEndpointAnalyzer {
     private final Logging log;
 
     private static final Pattern FULL_URL = Pattern.compile("(?i)(https?:\\/\\/[^\\s\"'\\\\<>]+)");
-    private static final Pattern ABS_PATH = Pattern.compile("(?:\"|')(/[^\\s\"'\\\\<>]+)(?:\"|')");
-    private static final Pattern REL_PATH = Pattern.compile("(?:\"|')(?:\\.\\./|\\./|[A-Za-z0-9_\\-/])([^\"'\\\\<>]*)(?:\"|')");
+    // RFC 3986 path characters: unreserved / pct-encoded / sub-delims / ":" / "@" and "/" as segment separator.
+    // Allow optional query ("?" + [pchar|"/"|"?"]*) to preserve downstream query param extraction.
+    private static final Pattern ABS_PATH = Pattern.compile(
+            "(?:\\\"|')"
+            + "(/(?:(?:%[0-9A-Fa-f]{2})|[A-Za-z0-9\\-\\._~!\\$&'\\(\\)\\*\\+,;=:@/])+)(?:\\?(?:(?:%[0-9A-Fa-f]{2})|[A-Za-z0-9\\-\\._~!\\$&'\\(\\)\\*\\+,;=:@/?])*)?"
+            + "(?:\\\"|')"
+    );
+    private static final Pattern REL_PATH = Pattern.compile(
+            "(?:\\\"|')"
+            + "(?=[^\\\"']*/)" // require at least one slash inside the literal
+            + "((?!/)(?:(?:%[0-9A-Fa-f]{2})|[A-Za-z0-9\\-\\._~!\\$&'\\(\\)\\*\\+,;=:@])(?:(?:%[0-9A-Fa-f]{2})|[A-Za-z0-9\\-\\._~!\\$&'\\(\\)\\*\\+,;=:@/])*)(?:\\?(?:(?:%[0-9A-Fa-f]{2})|[A-Za-z0-9\\-\\._~!\\$&'\\(\\)\\*\\+,;=:@/?])*)?"
+            + "(?:\\\"|')"
+    );
     private static final Pattern TEMPLATE = Pattern.compile("`([^`]+)`");
-    private static final Pattern CONCAT_A = Pattern.compile("\"(.*?)\"\\s*\\+\\s*([A-Za-z0-9_\\$\\.]+)");
-    private static final Pattern CONCAT_B = Pattern.compile("([A-Za-z0-9_\\$\\.]+)\\s*\\+\\s*\"(.*?)\"");
+    // Require a slash in the string literal to reduce noise from non-path concatenations
+    private static final Pattern CONCAT_A = Pattern.compile("\"(?=[^\\\"]*/)([^\\\"]*)\"\\s*\\+\\s*([A-Za-z0-9_\\$\\.]+)");
+    private static final Pattern CONCAT_B = Pattern.compile("([A-Za-z0-9_\\$\\.]+)\\s*\\+\\s*\"(?=[^\\\"]*/)([^\\\"]*)\"");
 
     public JsEndpointAnalyzer(DataStore store, Settings settings, Scope scope, Logging log) {
         this.store = store;
@@ -47,7 +59,7 @@ public class JsEndpointAnalyzer {
         while (m.find()) {
             String url = m.group(1);
             boolean inScope = inScopeHint || isInScope(url) || isRefererInScope(referer);
-            addEndpoint(url, EndpointRecord.Type.ABSOLUTE, inScope, sourceUrl, context(js, m.start(), m.end()));
+            addEndpoint(url, EndpointRecord.Type.ABSOLUTE, inScope, sourceUrl, context(js, m.start(), m.end()), FULL_URL.pattern());
         }
 
         // Absolute paths
@@ -55,15 +67,15 @@ public class JsEndpointAnalyzer {
         while (m.find()) {
             String path = m.group(1);
             boolean inScope = inScopeHint || isRefererInScope(referer);
-            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)));
+            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), ABS_PATH.pattern());
         }
 
         // Relative paths
         m = REL_PATH.matcher(js);
         while (m.find()) {
-            String path = m.group(0).replace("\"", "").replace("'", "");
+            String path = m.group(1);
             boolean inScope = inScopeHint || isRefererInScope(referer);
-            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(), m.end()));
+            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), REL_PATH.pattern());
         }
 
         // Template literals: replace ${...} with EXPR
@@ -75,11 +87,11 @@ public class JsEndpointAnalyzer {
             Matcher innerUrl = FULL_URL.matcher(masked);
             while (innerUrl.find()) {
                 addEndpoint(innerUrl.group(1), EndpointRecord.Type.TEMPLATE, inScopeHint || isRefererInScope(referer), sourceUrl,
-                        context(masked, innerUrl.start(1), innerUrl.end(1)));
+                        context(masked, innerUrl.start(1), innerUrl.end(1)), FULL_URL.pattern());
             }
             if (masked.startsWith("/")) {
                 addEndpoint(masked, EndpointRecord.Type.TEMPLATE, inScopeHint || isRefererInScope(referer), sourceUrl,
-                        context(masked, 0, masked.length()));
+                        context(masked, 0, masked.length()), TEMPLATE.pattern());
             }
         }
 
@@ -92,7 +104,7 @@ public class JsEndpointAnalyzer {
                 String candidate = (p == CONCAT_A ? left + "EXPR" : "EXPR" + right);
                 if (!candidate.isBlank()) {
                     EndpointRecord.Type type = candidate.startsWith("/") ? EndpointRecord.Type.RELATIVE : EndpointRecord.Type.TEMPLATE;
-                    addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()));
+                    addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()), p.pattern());
                 }
             }
         }
@@ -124,8 +136,30 @@ public class JsEndpointAnalyzer {
         }
     }
 
-    private void addEndpoint(String value, EndpointRecord.Type type, boolean inScope, String source, String ctx) {
-        store.addOrUpdateEndpoint(value, type, inScope, source, ctx);
+    private void addEndpoint(String value, EndpointRecord.Type type, boolean inScope, String source, String ctx, String pattern) {
+        boolean notSure = false;
+        try {
+            // Rule 1: for ABS_PATH/REL_PATH derived (type RELATIVE and pattern equals ABS_PATH|REL_PATH),
+            // if path contains any of: () $ ' + ~
+            boolean fromRelPatterns = type == EndpointRecord.Type.RELATIVE
+                    && pattern != null
+                    && (pattern.equals(ABS_PATH.pattern()) || pattern.equals(REL_PATH.pattern()));
+            if (fromRelPatterns && value != null) {
+                String pathOnly = value;
+                int qpos = pathOnly.indexOf('?');
+                if (qpos >= 0) pathOnly = pathOnly.substring(0, qpos);
+                if (pathOnly.matches(".*[\u0028\u0029\u0024'\u002B~].*")) { // ( ) $ ' + ~
+                    notSure = true;
+                }
+            }
+
+            // Rule 2: endpoints with no alphanumeric characters at all
+            if (value != null && !value.isEmpty() && !value.matches(".*[A-Za-z0-9].*")) {
+                notSure = true;
+            }
+        } catch (Throwable ignored) {}
+
+        store.addOrUpdateEndpoint(value, type, inScope, source, ctx, pattern, notSure);
         // Derive parameter names from query strings in the endpoint and mark them as only-in-code
         if (value != null) {
             int q = value.indexOf('?');
@@ -135,7 +169,7 @@ public class JsEndpointAnalyzer {
                     int eq = part.indexOf('=');
                     String name = eq > 0 ? part.substring(0, eq) : part;
                     if (!name.isBlank()) {
-                        store.markOnlyInCode(name);
+                        store.markOnlyInCode(name, pattern);
                     }
                 }
             }

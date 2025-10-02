@@ -36,18 +36,21 @@ public class DataStore {
         r.touch();
     }
 
-    public void markOnlyInCode(String name) {
+    public void markOnlyInCode(String name, String pattern) {
         ParameterRecord r = parameters.computeIfAbsent(name, ParameterRecord::new);
         r.onlyInCode = true;
+        if (pattern != null && !pattern.isBlank()) r.patternsFromJs.add(pattern);
     }
 
     // Endpoints
-    public void addOrUpdateEndpoint(String endpoint, EndpointRecord.Type type, boolean inScope, String source, String context) {
+    public void addOrUpdateEndpoint(String endpoint, EndpointRecord.Type type, boolean inScope, String source, String context, String pattern, boolean notSure) {
         if (endpoint == null || endpoint.isBlank()) return;
-        EndpointRecord e = endpoints.computeIfAbsent(endpoint, k -> new EndpointRecord(endpoint, type, inScope, context));
+        EndpointRecord e = endpoints.computeIfAbsent(endpoint, k -> new EndpointRecord(endpoint, type, inScope, context, pattern));
         if (source != null) e.sources.add(source);
         e.inScope = e.inScope || inScope;
         if (context != null && (e.contextSnippet == null || e.contextSnippet.isBlank())) e.contextSnippet = context;
+        if (pattern != null && (e.pattern == null || e.pattern.isBlank())) e.pattern = pattern;
+        e.notSure = e.notSure || notSure;
     }
 
     public List<ParameterRecord> snapshotParameters() {
@@ -55,7 +58,17 @@ public class DataStore {
     }
 
     public List<EndpointRecord> snapshotEndpoints() {
-        return endpoints.values().stream().sorted(Comparator.comparing(e -> e.endpointString)).collect(toList());
+        return endpoints.values().stream()
+                .filter(e -> !e.notSure)
+                .sorted(Comparator.comparing(e -> e.endpointString))
+                .collect(toList());
+    }
+
+    public List<EndpointRecord> snapshotNotSureEndpoints() {
+        return endpoints.values().stream()
+                .filter(e -> e.notSure)
+                .sorted(Comparator.comparing(ep -> ep.endpointString))
+                .collect(toList());
     }
 
     // Persistence

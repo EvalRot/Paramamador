@@ -11,6 +11,7 @@ public class ParameterRecord {
     public final Set<String> sources = Collections.synchronizedSet(new LinkedHashSet<>());
     public final Set<String> types = Collections.synchronizedSet(new LinkedHashSet<>()); // query/body/json/cookie
     public final List<String> exampleValues = Collections.synchronizedList(new ArrayList<>());
+    public final Set<String> patternsFromJs = Collections.synchronizedSet(new LinkedHashSet<>()); // regex patterns that led to this param (from JS endpoint query parsing)
     public long count;
     public long firstSeen;
     public long lastSeen;

@@ -84,6 +84,17 @@ public class Extension implements BurpExtension {
         // Start scheduled autosave
         scheduler.scheduleAtFixedRate(this::saveAllSafe, settings.getAutoSaveSeconds(), settings.getAutoSaveSeconds(), TimeUnit.SECONDS);
 
+        // Periodically refresh UI so new data appears in tables
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                if (tab != null) {
+                    tab.refreshAll();
+                }
+            } catch (Throwable t) {
+                log.logToError("UI refresh error: " + t.getMessage());
+            }
+        }, 2, 2, TimeUnit.SECONDS);
+
         // Build UI
         this.tab = new ParamamadorTab(store, settings, () -> {
             // Rescan action from UI

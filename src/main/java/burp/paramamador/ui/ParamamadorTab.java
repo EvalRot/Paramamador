@@ -37,6 +37,12 @@ public class ParamamadorTab {
     private final TableRowSorter<EndpointTableModel> endpointSorter = new TableRowSorter<>();
     private final JTextArea endpointContext = new JTextArea();
 
+    // NotSure endpoints
+    private final EndpointTableModel notSureModel;
+    private final JTable notSureTable = new JTable();
+    private final TableRowSorter<EndpointTableModel> notSureSorter = new TableRowSorter<>();
+    private final JTextArea notSureContext = new JTextArea();
+
     // Settings controls
     private final JCheckBox scopeOnly = new JCheckBox("Scope only");
     private final JSpinner autoSaveSec = new JSpinner(new SpinnerNumberModel(300, 30, 3600, 10));
@@ -54,6 +60,7 @@ public class ParamamadorTab {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Parameters", buildParametersPanel());
         tabs.addTab("Endpoints", buildEndpointsPanel());
+        tabs.addTab("NotSure", buildNotSurePanel());
         tabs.addTab("Settings", buildSettingsPanel());
         root.add(tabs, BorderLayout.CENTER);
 
@@ -66,6 +73,10 @@ public class ParamamadorTab {
         endpointTable.setModel(endpointModel);
         endpointSorter.setModel(endpointModel);
 
+        notSureModel = new EndpointTableModel();
+        notSureTable.setModel(notSureModel);
+        notSureSorter.setModel(notSureModel);
+
         refreshAll();
     }
 
@@ -75,6 +86,7 @@ public class ParamamadorTab {
         SwingUtilities.invokeLater(() -> {
             paramModel.setRows(store.snapshotParameters());
             endpointModel.setRows(store.snapshotEndpoints());
+            notSureModel.setRows(store.snapshotNotSureEndpoints());
         });
     }
 
@@ -186,6 +198,56 @@ public class ParamamadorTab {
         return p;
     }
 
+    private JPanel buildNotSurePanel() {
+        JPanel p = new JPanel(new BorderLayout());
+        JTextField filter = new JTextField();
+        JButton copy = new JButton("Copy");
+
+        notSureTable.setAutoCreateRowSorter(true);
+        notSureTable.setRowSorter(notSureSorter);
+
+        notSureContext.setEditable(false);
+        notSureContext.setLineWrap(true);
+
+        notSureTable.getSelectionModel().addListSelectionListener(e -> {
+            int r = notSureTable.getSelectedRow();
+            if (r >= 0) {
+                int m = notSureTable.convertRowIndexToModel(r);
+                notSureContext.setText(Optional.ofNullable(notSureModel.rows.get(m).contextSnippet).orElse(""));
+            }
+        });
+
+        filter.addActionListener(e -> {
+            String text = filter.getText();
+            if (text == null || text.isBlank()) notSureSorter.setRowFilter(null);
+            else notSureSorter.setRowFilter(RowFilter.regexFilter(Pattern.quote(text), 0));
+        });
+
+        copy.addActionListener((ActionEvent e) -> {
+            int[] rows = notSureTable.getSelectedRows();
+            StringBuilder sb = new StringBuilder();
+            for (int r : rows) {
+                int m = notSureTable.convertRowIndexToModel(r);
+                sb.append(notSureModel.rows.get(m).endpointString).append('\n');
+            }
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(sb.toString()), null);
+        });
+
+        JPanel top = new JPanel(new BorderLayout());
+        top.add(new JLabel("Filter:"), BorderLayout.WEST);
+        top.add(filter, BorderLayout.CENTER);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        actions.add(copy);
+        top.add(actions, BorderLayout.EAST);
+
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, new JScrollPane(notSureTable), new JScrollPane(notSureContext));
+        split.setResizeWeight(0.8);
+
+        p.add(top, BorderLayout.NORTH);
+        p.add(split, BorderLayout.CENTER);
+        return p;
+    }
+
     private JPanel buildSettingsPanel() {
         JPanel p = new JPanel(new BorderLayout());
 
@@ -271,7 +333,7 @@ public class ParamamadorTab {
 
     // Table models
     private static class ParameterTableModel extends AbstractTableModel {
-        private final String[] cols = {"Name", "Sources", "Types", "Examples", "Count", "OnlyInCode"};
+        private final String[] cols = {"Name", "Sources", "Types", "Examples", "Count", "OnlyInCode", "Pattern"};
         private List<ParameterRecord> rows = new ArrayList<>();
 
         public void setRows(List<ParameterRecord> r) { this.rows = new ArrayList<>(r); fireTableDataChanged(); }
@@ -287,13 +349,14 @@ public class ParamamadorTab {
                 case 3 -> String.join(", ", r.exampleValues);
                 case 4 -> r.count;
                 case 5 -> r.onlyInCode;
+                case 6 -> r.patternsFromJs.isEmpty() ? "" : String.join(", ", r.patternsFromJs);
                 default -> "";
             };
         }
     }
 
     private static class EndpointTableModel extends AbstractTableModel {
-        private final String[] cols = {"Endpoint", "Sources", "Type", "InScope", "FirstSeen"};
+        private final String[] cols = {"Endpoint", "Sources", "Type", "InScope", "FirstSeen", "Pattern"};
         private List<EndpointRecord> rows = new ArrayList<>();
 
         public void setRows(List<EndpointRecord> r) { this.rows = new ArrayList<>(r); fireTableDataChanged(); }
@@ -308,6 +371,7 @@ public class ParamamadorTab {
                 case 2 -> r.type;
                 case 3 -> r.inScope;
                 case 4 -> new java.util.Date(r.firstSeen);
+                case 5 -> r.pattern == null ? "" : r.pattern;
                 default -> "";
             };
         }

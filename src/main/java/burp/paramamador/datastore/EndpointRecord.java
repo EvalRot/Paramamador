@@ -13,13 +13,16 @@ public class EndpointRecord {
     public final Type type;
     public boolean inScope;
     public String contextSnippet;
+    public String pattern; // regex used to capture this endpoint
+    public boolean notSure;
     public long firstSeen;
 
-    public EndpointRecord(String endpointString, Type type, boolean inScope, String contextSnippet) {
+    public EndpointRecord(String endpointString, Type type, boolean inScope, String contextSnippet, String pattern) {
         this.endpointString = endpointString;
         this.type = type;
         this.inScope = inScope;
         this.contextSnippet = contextSnippet;
+        this.pattern = pattern;
         this.firstSeen = Instant.now().toEpochMilli();
     }
 }
