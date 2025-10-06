@@ -234,6 +234,23 @@ public class ParamamadorTab {
             refreshAll();
         });
         endpointPopup.add(endpointFalsePosItem);
+        JMenuItem endpointAddToGlobalIgnored = new JMenuItem("Add Endpoint to Global Ignored");
+        endpointAddToGlobalIgnored.addActionListener(e -> {
+            int[] rows = endpointTable.getSelectedRows();
+            boolean changed = false;
+            for (int r : rows) {
+                int m = endpointTable.convertRowIndexToModel(r);
+                EndpointRecord rec = endpointModel.rows.get(m);
+                if (rec == null) continue;
+                String val = rec.endpointString;
+                if (val != null && !val.isBlank()) {
+                    settings.addGlobalIgnoredValue(val.trim());
+                    changed = true;
+                }
+            }
+            if (changed) settings.saveGlobalIgnoredToExportDir();
+        });
+        endpointPopup.add(endpointAddToGlobalIgnored);
         endpointTable.setComponentPopupMenu(endpointPopup);
         endpointTable.addMouseListener(new MouseAdapter() {
             private void adjustSelection(MouseEvent e) {
@@ -323,6 +340,23 @@ public class ParamamadorTab {
             refreshAll();
         });
         notSurePopup.add(notSureFalsePosItem);
+        JMenuItem notSureAddToGlobalIgnored = new JMenuItem("Add Endpoint to Global Ignored");
+        notSureAddToGlobalIgnored.addActionListener(e -> {
+            int[] rows = notSureTable.getSelectedRows();
+            boolean changed = false;
+            for (int r : rows) {
+                int m = notSureTable.convertRowIndexToModel(r);
+                EndpointRecord rec = notSureModel.rows.get(m);
+                if (rec == null) continue;
+                String val = rec.endpointString;
+                if (val != null && !val.isBlank()) {
+                    settings.addGlobalIgnoredValue(val.trim());
+                    changed = true;
+                }
+            }
+            if (changed) settings.saveGlobalIgnoredToExportDir();
+        });
+        notSurePopup.add(notSureAddToGlobalIgnored);
         notSureTable.setComponentPopupMenu(notSurePopup);
         notSureTable.addMouseListener(new MouseAdapter() {
             private void adjustSelection(MouseEvent e) {
@@ -386,6 +420,7 @@ public class ParamamadorTab {
             if (!newPattern.getText().isBlank()) {
                 settings.addIgnoredPattern(newPattern.getText().trim());
                 ignoredModel.addElement(newPattern.getText().trim());
+                settings.saveIgnoredToExportDir();
                 newPattern.setText("");
             }
         });
@@ -394,6 +429,7 @@ public class ParamamadorTab {
                 settings.removeIgnoredPattern(s);
                 ignoredModel.removeElement(s);
             }
+            settings.saveIgnoredToExportDir();
         });
         buttons.add(new JLabel("Pattern:"));
         buttons.add(newPattern);
@@ -451,6 +487,12 @@ public class ParamamadorTab {
         settings.setMaxInlineJsKb((Integer) maxInlineKb.getValue());
         settings.setMaxQueueSize((Integer) maxQueue.getValue());
         settings.setExportDir(Path.of(exportDir.getText()));
+        // Reload ignore lists from the (possibly) new export directory
+        settings.loadIgnoredFromExportDir();
+        settings.loadGlobalIgnoredFromExportDir();
+        // Refresh the Ignored Patterns list UI
+        ignoredModel.clear();
+        for (String s : settings.getIgnoredPatterns()) ignoredModel.addElement(s);
     }
 
     private void clearData() {

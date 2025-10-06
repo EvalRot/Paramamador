@@ -66,6 +66,7 @@ public class JsEndpointAnalyzer {
         m = ABS_PATH.matcher(js);
         while (m.find()) {
             String path = m.group(1);
+            if (shouldIgnoreValue(path)) continue;
             boolean inScope = inScopeHint || isRefererInScope(referer);
             addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), ABS_PATH.pattern(), false);
         }
@@ -74,6 +75,7 @@ public class JsEndpointAnalyzer {
         m = REL_PATH.matcher(js);
         while (m.find()) {
             String path = m.group(1);
+            if (shouldIgnoreValue(path)) continue;
             boolean inScope = inScopeHint || isRefererInScope(referer);
             addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), REL_PATH.pattern(), false);
         }
@@ -116,6 +118,7 @@ public class JsEndpointAnalyzer {
                     if (right != null && right.matches(".*[\u0028\u0029\u0024\u0027\u002B\u002C\u0040\u007E\u003C\u003E\u0026\u003D].*")) suspiciousLiteral = true;
                 }
                 if (!candidate.isBlank()) {
+                    if (shouldIgnoreValue(candidate)) continue;
                     EndpointRecord.Type type = candidate.startsWith("/") ? EndpointRecord.Type.RELATIVE : EndpointRecord.Type.CONCAT;
                     addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()), p.pattern(), suspiciousLiteral);
                 }
@@ -128,6 +131,16 @@ public class JsEndpointAnalyzer {
         String l = urlOrName.toLowerCase(Locale.ROOT);
         for (String pat : settings.getIgnoredPatterns()) {
             if (l.contains(pat.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    private boolean shouldIgnoreValue(String endpointValue) {
+        if (endpointValue == null) return false;
+        String v = endpointValue.trim();
+        if (v.isEmpty()) return false;
+        for (String ig : settings.getGlobalIgnoredValues()) {
+            if (ig != null && v.equalsIgnoreCase(ig.trim())) return true;
         }
         return false;
     }

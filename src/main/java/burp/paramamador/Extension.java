@@ -90,6 +90,14 @@ public class Extension implements BurpExtension {
             log.logToError("Initial setup dialog failed: " + t.getMessage());
         }
 
+        // Load ignore lists from files in the chosen export dir
+        try {
+            settings.loadIgnoredFromExportDir();
+            settings.loadGlobalIgnoredFromExportDir();
+        } catch (Throwable t) {
+            log.logToError("Failed to load ignore lists: " + t.getMessage());
+        }
+
         // Start scheduled autosave
         scheduler.scheduleAtFixedRate(this::saveAllSafe, settings.getAutoSaveSeconds(), settings.getAutoSaveSeconds(), TimeUnit.SECONDS);
 
