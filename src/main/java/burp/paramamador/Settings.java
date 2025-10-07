@@ -7,6 +7,8 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Runtime settings for Paramamador with safe defaults.
@@ -26,11 +28,15 @@ public class Settings {
     )));
 
     // Project-specific export dir (snapshots, project data)
-    private volatile Path exportDir = Paths.get(System.getProperty("user.home"), ".paramamador");
+    private volatile Path exportDir = defaultExportDir();
     // Global export dir for ignore lists shared across projects
     private volatile Path globalExportDir = Paths.get(System.getProperty("user.home"), ".paramamador");
     private volatile boolean overwriteOnSave = true;
     private volatile String snapshotNamePrefix = null; // optional user-provided base name for JSON filenames
+    private volatile boolean loadPreviousOnStartup = false; // whether to load prior JSON results on startup
+    // Current session snapshot file targets (timestamp-based)
+    private volatile Path currentParametersFile = null;
+    private volatile Path currentEndpointsFile = null;
 
     public boolean isScopeOnly() { return scopeOnly; }
     public void setScopeOnly(boolean scopeOnly) { this.scopeOnly = scopeOnly; }
@@ -66,6 +72,23 @@ public class Settings {
 
     public String getSnapshotNamePrefix() { return snapshotNamePrefix; }
     public void setSnapshotNamePrefix(String prefix) { this.snapshotNamePrefix = (prefix == null || prefix.isBlank()) ? null : prefix; }
+
+    public Path getCurrentParametersFile() { return currentParametersFile; }
+    public void setCurrentParametersFile(Path p) { this.currentParametersFile = p; }
+    public Path getCurrentEndpointsFile() { return currentEndpointsFile; }
+    public void setCurrentEndpointsFile(Path p) { this.currentEndpointsFile = p; }
+
+    // Per-project file that stores lines of "<full JS URL>\t<SHA-256 hash>"
+    public Path scannedJsFilePath() { return exportDir.resolve("paramamador_scanned_js.txt"); }
+
+    public boolean isLoadPreviousOnStartup() { return loadPreviousOnStartup; }
+    public void setLoadPreviousOnStartup(boolean v) { this.loadPreviousOnStartup = v; }
+
+    private static Path defaultExportDir() {
+        String home = System.getProperty("user.home");
+        String date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy MM dd"));
+        return Paths.get(home, ".paramamador", date);
+    }
 
     // Global ignored JS source patterns persistence (substring match against JS URL)
     public Path globalIgnoredSourcesFilePath() { return globalExportDir.resolve("paramamador_ignored.txt"); }

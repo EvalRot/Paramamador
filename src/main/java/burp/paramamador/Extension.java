@@ -30,6 +30,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.nio.file.Path;
 
 /**
  * Paramamador Burp extension main entry point.
@@ -98,8 +99,31 @@ public class Extension implements BurpExtension {
             log.logToError("Failed to load ignore lists: " + t.getMessage());
         }
 
+        // Load previously scanned JS URL+hash list for content dedupe
+        try {
+            burp.paramamador.analyzer.JsEndpointAnalyzer.loadProcessedFromFile(settings.scannedJsFilePath());
+        } catch (Throwable t) {
+            log.logToError("Failed to load scanned JS list: " + t.getMessage());
+        }
+
         // Start scheduled autosave
         scheduler.scheduleAtFixedRate(this::saveAllSafe, settings.getAutoSaveSeconds(), settings.getAutoSaveSeconds(), TimeUnit.SECONDS);
+
+        // Optionally load previous session JSONs from export dir (user opt-in)
+        try {
+            if (settings.isLoadPreviousOnStartup()) {
+                java.nio.file.Path dir = settings.getExportDir();
+                java.util.List<java.nio.file.Path> jsons = new java.util.ArrayList<>();
+                try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(dir)) {
+                    stream.filter(p -> p != null && p.toString().toLowerCase().endsWith(".json")).forEach(jsons::add);
+                }
+                if (!jsons.isEmpty()) {
+                    store.loadFromFiles(jsons);
+                }
+            }
+        } catch (Throwable t) {
+            log.logToError("Failed to load previous results: " + t.getMessage());
+        }
 
         // Create startup snapshot files with project name + timestamp or user-provided base
         try {
@@ -185,8 +209,28 @@ public class Extension implements BurpExtension {
 
     private void saveAllSafe() {
         try {
-            IOUtils.ensureDir(settings.getExportDir());
-            store.saveToDisk(settings.getExportDir());
+            // Ensure we have current timestamp-based snapshot files under the active export dir
+            Path paramsFile = settings.getCurrentParametersFile();
+            Path endpointsFile = settings.getCurrentEndpointsFile();
+            Path exportDir = settings.getExportDir();
+            boolean needNew = (paramsFile == null || endpointsFile == null);
+            if (!needNew) {
+                try {
+                    needNew = (paramsFile.getParent() == null || !paramsFile.getParent().equals(exportDir))
+                            || (endpointsFile.getParent() == null || !endpointsFile.getParent().equals(exportDir));
+                } catch (Throwable ignored) {}
+            }
+
+            if (needNew) {
+                createStartupSnapshots();
+                paramsFile = settings.getCurrentParametersFile();
+                endpointsFile = settings.getCurrentEndpointsFile();
+            }
+
+            if (paramsFile != null) IOUtils.ensureDir(paramsFile.getParent());
+            if (endpointsFile != null) IOUtils.ensureDir(endpointsFile.getParent());
+
+            store.saveToDisk(paramsFile, endpointsFile);
         } catch (Throwable t) {
             log.logToError("Save failed: " + t.getMessage());
         }
@@ -208,6 +252,9 @@ public class Extension implements BurpExtension {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        // Remember current session snapshot targets for subsequent autosaves
+        settings.setCurrentParametersFile(params);
+        settings.setCurrentEndpointsFile(endpoints);
     }
 
     private void showInitialSetupDialog() throws Exception {
@@ -244,6 +291,9 @@ public class Extension implements BurpExtension {
                     }
                 });
 
+                JCheckBox loadPrev = new JCheckBox("Load previous results from export directory");
+                loadPrev.setSelected(false);
+
                 JPanel panel = new JPanel(new GridBagLayout());
                 GridBagConstraints c = new GridBagConstraints();
                 c.insets = new Insets(4,4,4,4);
@@ -263,6 +313,9 @@ public class Extension implements BurpExtension {
                 globalDirPanel.add(globalBrowse, BorderLayout.EAST);
                 c.gridx = 1; panel.add(globalDirPanel, c); row++;
 
+                // Load previous results checkbox
+                c.gridx = 0; c.gridy = row; c.gridwidth = 2; panel.add(loadPrev, c); row++; c.gridwidth = 1;
+
                 int option = JOptionPane.showConfirmDialog(null, panel, "Paramamador Setup", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
                 if (option == JOptionPane.OK_OPTION) {
                     String baseName = nameField.getText();
@@ -271,6 +324,7 @@ public class Extension implements BurpExtension {
                     if (dir != null && !dir.isBlank()) settings.setExportDir(java.nio.file.Paths.get(dir.trim()));
                     String gdir = globalDirField.getText();
                     if (gdir != null && !gdir.isBlank()) settings.setGlobalExportDir(java.nio.file.Paths.get(gdir.trim()));
+                    settings.setLoadPreviousOnStartup(loadPrev.isSelected());
                 }
             } catch (Throwable t) {
                 log.logToError("Setup dialog error: " + t.getMessage());

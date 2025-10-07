@@ -10,6 +10,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 /**
  * Static JavaScript endpoint extraction inspired by LinkFinder.
@@ -43,6 +51,11 @@ public class JsEndpointAnalyzer {
     private static final Pattern CONCAT_A = Pattern.compile("\"(?=[^\\\"]*/)(?=[^\\\"]*[A-Za-z0-9])([^\\\"]*)\"\\s*\\+\\s*([A-Za-z0-9_\\$\\.]+)");
     private static final Pattern CONCAT_B = Pattern.compile("([A-Za-z0-9_\\$\\.]+)\\s*\\+\\s*\"(?=[^\\\"]*/)(?=[^\\\"]*[A-Za-z0-9])([^\\\"]*)\"");
 
+    // Deduplication of JS content via hash to avoid rescanning same content multiple times
+    // and map the content hash to the first seen JS source URL (for persistence)
+    private static final ConcurrentHashMap<String, String> PROCESSED_JS_HASH_TO_URL = new ConcurrentHashMap<>();
+    private static final Object SCANNED_FILE_LOCK = new Object();
+
     public JsEndpointAnalyzer(DataStore store, Settings settings, Scope scope, Logging log) {
         this.store = store;
         this.settings = settings;
@@ -52,6 +65,21 @@ public class JsEndpointAnalyzer {
 
     public void extractEndpoints(String sourceUrl, String referer, String js, boolean inScopeHint) {
         if (js == null || js.isBlank()) return;
+        // Skip if this JS content has already been processed (content-hash based)
+        String bodyHash = sha256Hex(js);
+        if (bodyHash != null) {
+            String prev = PROCESSED_JS_HASH_TO_URL.putIfAbsent(bodyHash, sourceUrl == null ? "" : sourceUrl);
+            if (prev != null) return; // already processed this content
+            // Persist this newly seen JS content (URL + hash) into project export dir file
+            try {
+                Path file = settings.scannedJsFilePath();
+                Files.createDirectories(file.getParent());
+                String line = (sourceUrl == null ? "" : sourceUrl) + "\t" + bodyHash + System.lineSeparator();
+                synchronized (SCANNED_FILE_LOCK) {
+                    Files.writeString(file, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                }
+            } catch (Throwable ignored) {}
+        }
         if (shouldIgnore(sourceUrl)) return;
 
         // Full URLs
@@ -210,5 +238,48 @@ public class JsEndpointAnalyzer {
         int from = Math.max(0, start - 40);
         int to = Math.min(s.length(), end + 40);
         return s.substring(from, to);
+    }
+
+    private static String sha256Hex(String s) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(s.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            return null;
+        }
+    }
+
+    // Load previously scanned JS (URL + hash) from a file into the in-memory dedupe map
+    public static void loadProcessedFromFile(java.nio.file.Path file) {
+        if (file == null) return;
+        try {
+            if (!java.nio.file.Files.isRegularFile(file)) return;
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8);
+            for (String line : lines) {
+                if (line == null) continue;
+                String t = line.trim();
+                if (t.isEmpty()) continue;
+                String url = "";
+                String hash = null;
+                int tab = t.indexOf('\t');
+                if (tab >= 0) {
+                    url = t.substring(0, tab);
+                    hash = t.substring(tab + 1).trim();
+                } else {
+                    // Fallback: split by whitespace
+                    String[] parts = t.split("\\s+");
+                    if (parts.length >= 2) {
+                        url = parts[0];
+                        hash = parts[1];
+                    }
+                }
+                if (hash != null && !hash.isEmpty()) {
+                    PROCESSED_JS_HASH_TO_URL.putIfAbsent(hash, url == null ? "" : url);
+                }
+            }
+        } catch (Throwable ignored) {}
     }
 }

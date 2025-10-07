@@ -83,12 +83,6 @@ public class DataStore {
         return s + "||" + endpoint;
     }
 
-    // Persistence
-    public void saveToDisk(Path dir) throws IOException {
-        java.nio.file.Files.writeString(dir.resolve("paramamador_parameters.json"), GSON.toJson(parameters, PARAM_MAP_TYPE));
-        java.nio.file.Files.writeString(dir.resolve("paramamador_endpoints.json"), GSON.toJson(endpoints, ENDPOINT_MAP_TYPE));
-    }
-
     public void saveToDisk(Path parametersFile, Path endpointsFile) throws IOException {
         if (parametersFile != null) {
             java.nio.file.Files.createDirectories(parametersFile.getParent());
