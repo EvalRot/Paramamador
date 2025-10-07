@@ -90,10 +90,10 @@ public class Extension implements BurpExtension {
             log.logToError("Initial setup dialog failed: " + t.getMessage());
         }
 
-        // Load ignore lists from files in the chosen export dir
+        // Load GLOBAL ignore lists from the chosen global export dir
         try {
-            settings.loadIgnoredFromExportDir();
-            settings.loadGlobalIgnoredFromExportDir();
+            settings.loadGlobalIgnoredSourcesFromGlobalDir();
+            settings.loadGlobalIgnoredValuesFromGlobalDir();
         } catch (Throwable t) {
             log.logToError("Failed to load ignore lists: " + t.getMessage());
         }
@@ -142,8 +142,8 @@ public class Extension implements BurpExtension {
                         SettingsPanelSetting.integerSetting("Max queue size", settings.getMaxQueueSize()),
                         // Use a simple comma-separated string instead of listSetting to avoid default value issues
                         SettingsPanelSetting.stringSetting(
-                                "Ignored patterns (comma-separated)",
-                                String.join(",", settings.getIgnoredPatterns())
+                                "Global ignored sources (comma-separated)",
+                                String.join(",", settings.getGlobalIgnoredSources())
                         )
                 )
                 .build();
@@ -232,6 +232,18 @@ public class Extension implements BurpExtension {
                     }
                 });
 
+                JTextField globalDirField = new JTextField(settings.getGlobalExportDir().toString(), 30);
+                JButton globalBrowse = new JButton("Browse...");
+                globalBrowse.addActionListener(e -> {
+                    JFileChooser fc = new JFileChooser();
+                    fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                    try { fc.setCurrentDirectory(settings.getGlobalExportDir().toFile()); } catch (Throwable ignored) {}
+                    int res = fc.showOpenDialog(null);
+                    if (res == JFileChooser.APPROVE_OPTION && fc.getSelectedFile() != null) {
+                        globalDirField.setText(fc.getSelectedFile().getAbsolutePath());
+                    }
+                });
+
                 JPanel panel = new JPanel(new GridBagLayout());
                 GridBagConstraints c = new GridBagConstraints();
                 c.insets = new Insets(4,4,4,4);
@@ -245,12 +257,20 @@ public class Extension implements BurpExtension {
                 dirPanel.add(browse, BorderLayout.EAST);
                 c.gridx = 1; panel.add(dirPanel, c); row++;
 
+                c.gridx = 0; c.gridy = row; panel.add(new JLabel("Global export directory"), c);
+                JPanel globalDirPanel = new JPanel(new BorderLayout());
+                globalDirPanel.add(globalDirField, BorderLayout.CENTER);
+                globalDirPanel.add(globalBrowse, BorderLayout.EAST);
+                c.gridx = 1; panel.add(globalDirPanel, c); row++;
+
                 int option = JOptionPane.showConfirmDialog(null, panel, "Paramamador Setup", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
                 if (option == JOptionPane.OK_OPTION) {
                     String baseName = nameField.getText();
                     if (baseName != null && !baseName.isBlank()) settings.setSnapshotNamePrefix(baseName.trim());
                     String dir = dirField.getText();
                     if (dir != null && !dir.isBlank()) settings.setExportDir(java.nio.file.Paths.get(dir.trim()));
+                    String gdir = globalDirField.getText();
+                    if (gdir != null && !gdir.isBlank()) settings.setGlobalExportDir(java.nio.file.Paths.get(gdir.trim()));
                 }
             } catch (Throwable t) {
                 log.logToError("Setup dialog error: " + t.getMessage());
@@ -384,11 +404,12 @@ public class Extension implements BurpExtension {
                     }
                 });
 
-                JMenuItem ignoreItem = new JMenuItem("Paramamador: Ignore this JS");
+                JMenuItem ignoreItem = new JMenuItem("Paramamador: Ignore this JS source");
                 ignoreItem.addActionListener(a -> event.messageEditorRequestResponse().ifPresent(msg -> {
                     String url = msg.requestResponse().request() != null ? msg.requestResponse().request().url() : null;
                     if (url != null && !url.isEmpty()) {
-                        settings.addIgnoredPattern(url);
+                        settings.addGlobalIgnoredSource(url);
+                        try { settings.saveGlobalIgnoredSourcesToGlobalDir(); } catch (Throwable ignored) {}
                         SwingUtilities.invokeLater(tab::refreshSettingsFromModel);
                     }
                 }));

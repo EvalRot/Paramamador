@@ -17,7 +17,7 @@ public class Settings {
     private volatile int maxInlineJsKb = 200;
     private volatile int maxQueueSize = 200;
     private volatile int workerThreads = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
-    private final List<String> ignoredPatterns = Collections.synchronizedList(new ArrayList<>(List.of(
+    private final List<String> globalIgnoredSources = Collections.synchronizedList(new ArrayList<>(List.of(
             "jquery", "bootstrap", "google-analytics", "gtag.js", "gpt.js", "segment"
     )));
     // Global values to ignore as endpoints (exact value match), e.g., mime types like "text/plain"
@@ -25,7 +25,10 @@ public class Settings {
             "text/plain"
     )));
 
+    // Project-specific export dir (snapshots, project data)
     private volatile Path exportDir = Paths.get(System.getProperty("user.home"), ".paramamador");
+    // Global export dir for ignore lists shared across projects
+    private volatile Path globalExportDir = Paths.get(System.getProperty("user.home"), ".paramamador");
     private volatile boolean overwriteOnSave = true;
     private volatile String snapshotNamePrefix = null; // optional user-provided base name for JSON filenames
 
@@ -44,9 +47,9 @@ public class Settings {
     public int getWorkerThreads() { return workerThreads; }
     public void setWorkerThreads(int workerThreads) { this.workerThreads = Math.max(1, workerThreads); }
 
-    public List<String> getIgnoredPatterns() { return new ArrayList<>(ignoredPatterns); }
-    public void addIgnoredPattern(String p) { if (p != null && !p.isBlank()) ignoredPatterns.add(p); }
-    public void removeIgnoredPattern(String p) { ignoredPatterns.remove(p); }
+    public List<String> getGlobalIgnoredSources() { return new ArrayList<>(globalIgnoredSources); }
+    public void addGlobalIgnoredSource(String p) { if (p != null && !p.isBlank()) globalIgnoredSources.add(p); }
+    public void removeGlobalIgnoredSource(String p) { globalIgnoredSources.remove(p); }
 
     public List<String> getGlobalIgnoredValues() { return new ArrayList<>(globalIgnoredValues); }
     public void addGlobalIgnoredValue(String v) { if (v != null && !v.isBlank()) globalIgnoredValues.add(v); }
@@ -55,17 +58,20 @@ public class Settings {
     public Path getExportDir() { return exportDir; }
     public void setExportDir(Path exportDir) { if (exportDir != null) this.exportDir = exportDir; }
 
+    public Path getGlobalExportDir() { return globalExportDir; }
+    public void setGlobalExportDir(Path dir) { if (dir != null) this.globalExportDir = dir; }
+
     public boolean isOverwriteOnSave() { return overwriteOnSave; }
     public void setOverwriteOnSave(boolean overwriteOnSave) { this.overwriteOnSave = overwriteOnSave; }
 
     public String getSnapshotNamePrefix() { return snapshotNamePrefix; }
     public void setSnapshotNamePrefix(String prefix) { this.snapshotNamePrefix = (prefix == null || prefix.isBlank()) ? null : prefix; }
 
-    // Ignored JS source patterns persistence (substring match against JS URL)
-    public Path ignoredFilePath() { return exportDir.resolve("paramamador_ignored.txt"); }
-    public synchronized void loadIgnoredFromExportDir() {
+    // Global ignored JS source patterns persistence (substring match against JS URL)
+    public Path globalIgnoredSourcesFilePath() { return globalExportDir.resolve("paramamador_ignored.txt"); }
+    public synchronized void loadGlobalIgnoredSourcesFromGlobalDir() {
         try {
-            Path file = ignoredFilePath();
+            Path file = globalIgnoredSourcesFilePath();
             Files.createDirectories(file.getParent());
             if (Files.exists(file)) {
                 List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
@@ -77,30 +83,30 @@ public class Settings {
                         if (!t.isEmpty()) cleaned.add(t);
                     }
                 }
-                synchronized (ignoredPatterns) {
-                    ignoredPatterns.clear();
-                    ignoredPatterns.addAll(cleaned);
+                synchronized (globalIgnoredSources) {
+                    globalIgnoredSources.clear();
+                    globalIgnoredSources.addAll(cleaned);
                 }
             } else {
-                saveIgnoredToExportDir();
+                saveGlobalIgnoredSourcesToGlobalDir();
             }
         } catch (Throwable ignored) {}
     }
-    public synchronized void saveIgnoredToExportDir() {
+    public synchronized void saveGlobalIgnoredSourcesToGlobalDir() {
         try {
-            Path file = ignoredFilePath();
+            Path file = globalIgnoredSourcesFilePath();
             Files.createDirectories(file.getParent());
             List<String> vals;
-            synchronized (ignoredPatterns) { vals = new ArrayList<>(ignoredPatterns); }
+            synchronized (globalIgnoredSources) { vals = new ArrayList<>(globalIgnoredSources); }
             Files.write(file, vals, StandardCharsets.UTF_8);
         } catch (Throwable ignored) {}
     }
 
     // Global ignored endpoint values persistence (exact match against endpoint string)
-    public Path globalIgnoredFilePath() { return exportDir.resolve("paramamador_global_ignored.txt"); }
-    public synchronized void loadGlobalIgnoredFromExportDir() {
+    public Path globalIgnoredValuesFilePath() { return globalExportDir.resolve("paramamador_global_ignored.txt"); }
+    public synchronized void loadGlobalIgnoredValuesFromGlobalDir() {
         try {
-            Path file = globalIgnoredFilePath();
+            Path file = globalIgnoredValuesFilePath();
             Files.createDirectories(file.getParent());
             if (Files.exists(file)) {
                 List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
@@ -117,13 +123,13 @@ public class Settings {
                     globalIgnoredValues.addAll(cleaned);
                 }
             } else {
-                saveGlobalIgnoredToExportDir();
+                saveGlobalIgnoredValuesToGlobalDir();
             }
         } catch (Throwable ignored) {}
     }
-    public synchronized void saveGlobalIgnoredToExportDir() {
+    public synchronized void saveGlobalIgnoredValuesToGlobalDir() {
         try {
-            Path file = globalIgnoredFilePath();
+            Path file = globalIgnoredValuesFilePath();
             Files.createDirectories(file.getParent());
             List<String> vals;
             synchronized (globalIgnoredValues) { vals = new ArrayList<>(globalIgnoredValues); }

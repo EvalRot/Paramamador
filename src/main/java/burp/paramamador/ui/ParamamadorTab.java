@@ -101,7 +101,7 @@ public class ParamamadorTab {
             maxQueue.setValue(settings.getMaxQueueSize());
             exportDir.setText(settings.getExportDir().toString());
             ignoredModel.clear();
-            for (String s : settings.getIgnoredPatterns()) ignoredModel.addElement(s);
+            for (String s : settings.getGlobalIgnoredSources()) ignoredModel.addElement(s);
         });
     }
 
@@ -248,7 +248,7 @@ public class ParamamadorTab {
                     changed = true;
                 }
             }
-            if (changed) settings.saveGlobalIgnoredToExportDir();
+            if (changed) settings.saveGlobalIgnoredValuesToGlobalDir();
         });
         endpointPopup.add(endpointAddToGlobalIgnored);
         endpointTable.setComponentPopupMenu(endpointPopup);
@@ -354,7 +354,7 @@ public class ParamamadorTab {
                     changed = true;
                 }
             }
-            if (changed) settings.saveGlobalIgnoredToExportDir();
+            if (changed) settings.saveGlobalIgnoredValuesToGlobalDir();
         });
         notSurePopup.add(notSureAddToGlobalIgnored);
         notSureTable.setComponentPopupMenu(notSurePopup);
@@ -410,7 +410,7 @@ public class ParamamadorTab {
         c.gridx = 1; exportDir.setText(settings.getExportDir().toString()); form.add(exportDir, c); row++;
 
         c.gridx = 0; c.gridy = row; form.add(new JLabel("Ignored patterns"), c);
-        settings.getIgnoredPatterns().forEach(ignoredModel::addElement);
+        settings.getGlobalIgnoredSources().forEach(ignoredModel::addElement);
         JList<String> ignored = new JList<>(ignoredModel);
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JTextField newPattern = new JTextField(20);
@@ -418,20 +418,20 @@ public class ParamamadorTab {
         JButton remove = new JButton("Remove selected");
         add.addActionListener(e -> {
             if (!newPattern.getText().isBlank()) {
-                settings.addIgnoredPattern(newPattern.getText().trim());
+                settings.addGlobalIgnoredSource(newPattern.getText().trim());
                 ignoredModel.addElement(newPattern.getText().trim());
-                settings.saveIgnoredToExportDir();
+                settings.saveGlobalIgnoredSourcesToGlobalDir();
                 newPattern.setText("");
             }
         });
         remove.addActionListener(e -> {
             for (String s : ignored.getSelectedValuesList()) {
-                settings.removeIgnoredPattern(s);
+                settings.removeGlobalIgnoredSource(s);
                 ignoredModel.removeElement(s);
             }
-            settings.saveIgnoredToExportDir();
+            settings.saveGlobalIgnoredSourcesToGlobalDir();
         });
-        buttons.add(new JLabel("Pattern:"));
+        buttons.add(new JLabel("Global source substring:"));
         buttons.add(newPattern);
         buttons.add(add);
         buttons.add(remove);
@@ -487,12 +487,12 @@ public class ParamamadorTab {
         settings.setMaxInlineJsKb((Integer) maxInlineKb.getValue());
         settings.setMaxQueueSize((Integer) maxQueue.getValue());
         settings.setExportDir(Path.of(exportDir.getText()));
-        // Reload ignore lists from the (possibly) new export directory
-        settings.loadIgnoredFromExportDir();
-        settings.loadGlobalIgnoredFromExportDir();
+        // Reload ignore lists from the (possibly) new global export directory
+        settings.loadGlobalIgnoredSourcesFromGlobalDir();
+        settings.loadGlobalIgnoredValuesFromGlobalDir();
         // Refresh the Ignored Patterns list UI
         ignoredModel.clear();
-        for (String s : settings.getIgnoredPatterns()) ignoredModel.addElement(s);
+        for (String s : settings.getGlobalIgnoredSources()) ignoredModel.addElement(s);
     }
 
     private void clearData() {

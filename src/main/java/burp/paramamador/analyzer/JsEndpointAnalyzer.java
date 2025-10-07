@@ -129,7 +129,7 @@ public class JsEndpointAnalyzer {
     private boolean shouldIgnore(String urlOrName) {
         if (urlOrName == null) return false;
         String l = urlOrName.toLowerCase(Locale.ROOT);
-        for (String pat : settings.getIgnoredPatterns()) {
+        for (String pat : settings.getGlobalIgnoredSources()) {
             if (l.contains(pat.toLowerCase(Locale.ROOT))) return true;
         }
         return false;
