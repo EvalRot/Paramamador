@@ -14,6 +14,8 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.*;
@@ -122,20 +124,83 @@ public class ParamamadorTab {
 
     // no longer needed: per-source filtering handled via record flags and DataStore snapshots
 
+    // Attach live, case-insensitive substring filter that matches across all columns
+    private static void attachTextFilter(JTextField field, TableRowSorter<? extends AbstractTableModel> sorter, int... columns) {
+        DocumentListener dl = new DocumentListener() {
+            private void update() {
+                String text = field.getText();
+                if (text == null || text.isBlank()) {
+                    sorter.setRowFilter(null);
+                    return;
+                }
+                final String needle = text.toLowerCase(Locale.ROOT);
+                sorter.setRowFilter(new RowFilter<javax.swing.table.TableModel, Integer>() {
+                    @Override
+                    public boolean include(Entry<? extends javax.swing.table.TableModel, ? extends Integer> entry) {
+                        int valueCount = entry.getValueCount();
+                        if (columns != null && columns.length > 0) {
+                            for (int c : columns) {
+                                if (c >= 0 && c < valueCount) {
+                                    Object v = entry.getValue(c);
+                                    if (v != null && v.toString().toLowerCase(Locale.ROOT).contains(needle)) return true;
+                                }
+                            }
+                            return false;
+                        }
+                        for (int i = 0; i < valueCount; i++) {
+                            Object v = entry.getValue(i);
+                            if (v != null && v.toString().toLowerCase(Locale.ROOT).contains(needle)) return true;
+                        }
+                        return false;
+                    }
+                });
+            }
+            @Override public void insertUpdate(DocumentEvent e) { update(); }
+            @Override public void removeUpdate(DocumentEvent e) { update(); }
+            @Override public void changedUpdate(DocumentEvent e) { update(); }
+        };
+        field.getDocument().addDocumentListener(dl);
+        // Also trigger on Enter as a fallback
+        field.addActionListener(e -> {
+            // ensure we update even if Document events are missed
+            String text = field.getText();
+            if (text == null || text.isBlank()) sorter.setRowFilter(null);
+            else {
+                final String needle = text.toLowerCase(Locale.ROOT);
+                sorter.setRowFilter(new RowFilter<javax.swing.table.TableModel, Integer>() {
+                    @Override
+                    public boolean include(Entry<? extends javax.swing.table.TableModel, ? extends Integer> entry) {
+                        int valueCount = entry.getValueCount();
+                        if (columns != null && columns.length > 0) {
+                            for (int c : columns) {
+                                if (c >= 0 && c < valueCount) {
+                                    Object v = entry.getValue(c);
+                                    if (v != null && v.toString().toLowerCase(Locale.ROOT).contains(needle)) return true;
+                                }
+                            }
+                            return false;
+                        }
+                        for (int i = 0; i < valueCount; i++) {
+                            Object v = entry.getValue(i);
+                            if (v != null && v.toString().toLowerCase(Locale.ROOT).contains(needle)) return true;
+                        }
+                        return false;
+                    }
+                });
+            }
+        });
+    }
+
     private JPanel buildParametersPanel() {
         JPanel p = new JPanel(new BorderLayout());
         JTextField filter = new JTextField();
         JButton copy = new JButton("Copy");
         JButton export = new JButton("Export selected");
 
-        paramTable.setAutoCreateRowSorter(true);
+        paramTable.setAutoCreateRowSorter(false);
         paramTable.setRowSorter(paramSorter);
 
-        filter.addActionListener(e -> {
-            String text = filter.getText();
-            if (text == null || text.isBlank()) paramSorter.setRowFilter(null);
-            else paramSorter.setRowFilter(RowFilter.regexFilter(Pattern.quote(text), 0));
-        });
+        attachTextFilter(filter, paramSorter, 0);
 
         copy.addActionListener((ActionEvent e) -> {
             int[] rows = paramTable.getSelectedRows();
@@ -206,7 +271,7 @@ public class ParamamadorTab {
         JButton sendToRepeater = new JButton("Send to Repeater");
         JButton openInProxy = new JButton("Open in Proxy History");
 
-        endpointTable.setAutoCreateRowSorter(true);
+        endpointTable.setAutoCreateRowSorter(false);
         endpointTable.setRowSorter(endpointSorter);
 
         endpointContext.setEditable(false);
@@ -220,11 +285,7 @@ public class ParamamadorTab {
             }
         });
 
-        filter.addActionListener(e -> {
-            String text = filter.getText();
-            if (text == null || text.isBlank()) endpointSorter.setRowFilter(null);
-            else endpointSorter.setRowFilter(RowFilter.regexFilter(Pattern.quote(text), 0));
-        });
+        attachTextFilter(filter, endpointSorter, 0);
 
         copy.addActionListener((ActionEvent e) -> {
             int[] rows = endpointTable.getSelectedRows();
@@ -312,7 +373,7 @@ public class ParamamadorTab {
         JTextField filter = new JTextField();
         JButton copy = new JButton("Copy");
 
-        notSureTable.setAutoCreateRowSorter(true);
+        notSureTable.setAutoCreateRowSorter(false);
         notSureTable.setRowSorter(notSureSorter);
 
         notSureContext.setEditable(false);
@@ -326,11 +387,7 @@ public class ParamamadorTab {
             }
         });
 
-        filter.addActionListener(e -> {
-            String text = filter.getText();
-            if (text == null || text.isBlank()) notSureSorter.setRowFilter(null);
-            else notSureSorter.setRowFilter(RowFilter.regexFilter(Pattern.quote(text), 0));
-        });
+        attachTextFilter(filter, notSureSorter, 0);
 
         copy.addActionListener((ActionEvent e) -> {
             int[] rows = notSureTable.getSelectedRows();
@@ -416,14 +473,10 @@ public class ParamamadorTab {
         JTextField filter = new JTextField();
         JButton copy = new JButton("Copy URLs");
 
-        jsluiceTable.setAutoCreateRowSorter(true);
+        jsluiceTable.setAutoCreateRowSorter(false);
         jsluiceTable.setRowSorter(jsluiceSorter);
 
-        filter.addActionListener(e -> {
-            String text = filter.getText();
-            if (text == null || text.isBlank()) jsluiceSorter.setRowFilter(null);
-            else jsluiceSorter.setRowFilter(RowFilter.regexFilter(Pattern.quote(text), 0));
-        });
+        attachTextFilter(filter, jsluiceSorter, 0);
 
         copy.addActionListener((ActionEvent e) -> {
             int[] rows = jsluiceTable.getSelectedRows();
