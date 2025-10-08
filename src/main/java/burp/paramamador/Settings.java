@@ -38,6 +38,14 @@ public class Settings {
     private volatile Path currentParametersFile = null;
     private volatile Path currentEndpointsFile = null;
 
+    // jsluice integration settings
+    private volatile boolean enableJsluice = false;
+    private volatile Path goBinDir = null; // optional, if null use env variables
+    private volatile int jsluiceTimeoutSec = 30;
+    private volatile int jsluiceWorkers = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors()));
+    private volatile int maxJsluiceFileMb = 8; // skip very big files
+    private volatile String jsluiceStoreSubdir = "jsluice_js"; // subdir under exportDir for JS bodies
+
     public boolean isScopeOnly() { return scopeOnly; }
     public void setScopeOnly(boolean scopeOnly) { this.scopeOnly = scopeOnly; }
 
@@ -80,9 +88,25 @@ public class Settings {
 
     // Per-project file that stores lines of "<full JS URL>\t<SHA-256 hash>"
     public Path scannedJsFilePath() { return exportDir.resolve("paramamador_scanned_js.txt"); }
+    public Path jsluiceScannedFilePath() { return exportDir.resolve("paramamador_jsluice_scanned.txt"); }
+    public Path jsluiceStoreDir() { return exportDir.resolve(jsluiceStoreSubdir); }
+    public Path jsluiceResultsDir() { return exportDir.resolve("jsluice").resolve("results"); }
 
     public boolean isLoadPreviousOnStartup() { return loadPreviousOnStartup; }
     public void setLoadPreviousOnStartup(boolean v) { this.loadPreviousOnStartup = v; }
+
+    public boolean isEnableJsluice() { return enableJsluice; }
+    public void setEnableJsluice(boolean v) { this.enableJsluice = v; }
+    public Path getGoBinDir() { return goBinDir; }
+    public void setGoBinDir(Path p) { this.goBinDir = p; }
+    public int getJsluiceTimeoutSec() { return jsluiceTimeoutSec; }
+    public void setJsluiceTimeoutSec(int sec) { this.jsluiceTimeoutSec = Math.max(5, sec); }
+    public int getJsluiceWorkers() { return jsluiceWorkers; }
+    public void setJsluiceWorkers(int n) { this.jsluiceWorkers = Math.max(1, n); }
+    public int getMaxJsluiceFileMb() { return maxJsluiceFileMb; }
+    public void setMaxJsluiceFileMb(int mb) { this.maxJsluiceFileMb = Math.max(1, mb); }
+    public String getJsluiceStoreSubdir() { return jsluiceStoreSubdir; }
+    public void setJsluiceStoreSubdir(String v) { if (v != null && !v.isBlank()) this.jsluiceStoreSubdir = v; }
 
     private static Path defaultExportDir() {
         String home = System.getProperty("user.home");

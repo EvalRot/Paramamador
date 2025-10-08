@@ -9,6 +9,7 @@ import burp.api.montoya.sitemap.SiteMap;
 import burp.paramamador.Settings;
 import burp.paramamador.analyzer.JsEndpointAnalyzer;
 import burp.paramamador.datastore.DataStore;
+import burp.paramamador.integrations.JsluiceService;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,14 +24,16 @@ public class SiteTreeScanner {
     private final Settings settings;
     private final DataStore store;
     private final Logging log;
+    private final JsluiceService jsluiceService;
     private final Set<String> processed = ConcurrentHashMap.newKeySet();
 
-    public SiteTreeScanner(MontoyaApi api, JsEndpointAnalyzer jsAnalyzer, Settings settings, DataStore store, Logging log) {
+    public SiteTreeScanner(MontoyaApi api, JsEndpointAnalyzer jsAnalyzer, Settings settings, DataStore store, Logging log, JsluiceService jsluiceService) {
         this.api = api;
         this.jsAnalyzer = jsAnalyzer;
         this.settings = settings;
         this.store = store;
         this.log = log;
+        this.jsluiceService = jsluiceService;
     }
 
     public void rescanSiteTree() {
@@ -51,6 +54,12 @@ public class SiteTreeScanner {
                     String body = fetched.response().bodyToString();
                     // Determine inScope using the original request if possible
                     boolean inScope = rr.request().isInScope();
+                    try {
+                        if (jsluiceService != null && body != null && !body.isBlank()) {
+                            String referer = rr.request().headerValue("Referer");
+                            jsluiceService.enqueue(url, referer, body, inScope);
+                        }
+                    } catch (Throwable ignored) {}
                     jsAnalyzer.extractEndpoints(url, rr.request().headerValue("Referer"), body, inScope);
                     processed.add(url);
                     count++;
@@ -62,4 +71,3 @@ public class SiteTreeScanner {
         log.logToOutput("Rescan complete. Analyzed JS files: " + count);
     }
 }
-

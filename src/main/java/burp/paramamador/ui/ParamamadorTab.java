@@ -4,6 +4,8 @@ import burp.paramamador.Settings;
 import burp.paramamador.datastore.DataStore;
 import burp.paramamador.datastore.EndpointRecord;
 import burp.paramamador.datastore.ParameterRecord;
+import burp.paramamador.integrations.JsluiceService;
+import burp.paramamador.integrations.JsluiceUrlRecord;
 
 import javax.swing.*;
 import javax.swing.table.AbstractTableModel;
@@ -26,6 +28,7 @@ public class ParamamadorTab {
     private final Settings settings;
     private final Runnable rescanAction;
     private final Runnable saveAction;
+    private final JsluiceService jsluiceService;
 
     private final JPanel root = new JPanel(new BorderLayout());
 
@@ -46,6 +49,11 @@ public class ParamamadorTab {
     private final TableRowSorter<EndpointTableModel> notSureSorter = new TableRowSorter<>();
     private final JTextArea notSureContext = new JTextArea();
 
+    // jsluice results
+    private final JsluiceTableModel jsluiceModel;
+    private final JTable jsluiceTable = new JTable();
+    private final javax.swing.table.TableRowSorter<JsluiceTableModel> jsluiceSorter = new javax.swing.table.TableRowSorter<>();
+
     // Settings controls
     private final JCheckBox scopeOnly = new JCheckBox("Scope only");
     private final JSpinner autoSaveSec = new JSpinner(new SpinnerNumberModel(300, 30, 3600, 10));
@@ -54,16 +62,18 @@ public class ParamamadorTab {
     private final JTextField exportDir = new JTextField();
     private final DefaultListModel<String> ignoredModel = new DefaultListModel<>();
 
-    public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction) {
+    public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction, JsluiceService jsluiceService) {
         this.store = store;
         this.settings = settings;
         this.rescanAction = rescanAction;
         this.saveAction = saveAction;
+        this.jsluiceService = jsluiceService;
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Parameters", buildParametersPanel());
         tabs.addTab("Endpoints", buildEndpointsPanel());
         tabs.addTab("NotSure", buildNotSurePanel());
+        tabs.addTab("Jsluice", buildJsluicePanel());
         tabs.addTab("Settings", buildSettingsPanel());
         root.add(tabs, BorderLayout.CENTER);
 
@@ -80,6 +90,10 @@ public class ParamamadorTab {
         notSureTable.setModel(notSureModel);
         notSureSorter.setModel(notSureModel);
 
+        jsluiceModel = new JsluiceTableModel();
+        jsluiceTable.setModel(jsluiceModel);
+        jsluiceSorter.setModel(jsluiceModel);
+
         refreshAll();
     }
 
@@ -90,6 +104,7 @@ public class ParamamadorTab {
             paramModel.setRows(store.snapshotParameters());
             endpointModel.setRows(store.snapshotEndpoints());
             notSureModel.setRows(store.snapshotNotSureEndpoints());
+            if (jsluiceService != null) jsluiceModel.setRows(jsluiceService.snapshotResults());
         });
     }
 
@@ -132,7 +147,7 @@ public class ParamamadorTab {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(sb.toString()), null);
         });
 
-        // Right-click popup for copying first column
+        // Right-click popup for copying first column and marking false positives
         JPopupMenu paramPopup = new JPopupMenu();
         JMenuItem paramCopyItem = new JMenuItem("Copy");
         paramCopyItem.addActionListener(e -> {
@@ -145,6 +160,18 @@ public class ParamamadorTab {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(sb.toString()), null);
         });
         paramPopup.add(paramCopyItem);
+        JMenuItem paramFalsePosItem = new JMenuItem("Mark as False Positive");
+        paramFalsePosItem.addActionListener(e -> {
+            int[] rows = paramTable.getSelectedRows();
+            for (int r : rows) {
+                int m = paramTable.convertRowIndexToModel(r);
+                ParameterRecord rec = paramModel.rows.get(m);
+                if (rec == null || rec.name == null || rec.name.isBlank()) continue;
+                store.markParameterFalsePositive(rec.name, true);
+            }
+            refreshAll();
+        });
+        paramPopup.add(paramFalsePosItem);
         paramTable.setComponentPopupMenu(paramPopup);
         paramTable.addMouseListener(new MouseAdapter() {
             private void adjustSelection(MouseEvent e) {
@@ -384,6 +411,42 @@ public class ParamamadorTab {
         return p;
     }
 
+    private JPanel buildJsluicePanel() {
+        JPanel p = new JPanel(new BorderLayout());
+        JTextField filter = new JTextField();
+        JButton copy = new JButton("Copy URLs");
+
+        jsluiceTable.setAutoCreateRowSorter(true);
+        jsluiceTable.setRowSorter(jsluiceSorter);
+
+        filter.addActionListener(e -> {
+            String text = filter.getText();
+            if (text == null || text.isBlank()) jsluiceSorter.setRowFilter(null);
+            else jsluiceSorter.setRowFilter(RowFilter.regexFilter(Pattern.quote(text), 0));
+        });
+
+        copy.addActionListener((ActionEvent e) -> {
+            int[] rows = jsluiceTable.getSelectedRows();
+            StringBuilder sb = new StringBuilder();
+            for (int r : rows) {
+                int m = jsluiceTable.convertRowIndexToModel(r);
+                sb.append(jsluiceModel.rows.get(m).url == null ? "" : jsluiceModel.rows.get(m).url).append('\n');
+            }
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(sb.toString()), null);
+        });
+
+        JPanel top = new JPanel(new BorderLayout());
+        top.add(new JLabel("Filter:"), BorderLayout.WEST);
+        top.add(filter, BorderLayout.CENTER);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        actions.add(copy);
+        top.add(actions, BorderLayout.EAST);
+
+        p.add(top, BorderLayout.NORTH);
+        p.add(new JScrollPane(jsluiceTable), BorderLayout.CENTER);
+        return p;
+    }
+
     private JPanel buildSettingsPanel() {
         JPanel p = new JPanel(new BorderLayout());
 
@@ -567,6 +630,30 @@ public class ParamamadorTab {
                 }
             }
             return val;
+        }
+    }
+
+    private static class JsluiceTableModel extends AbstractTableModel {
+        private final String[] cols = {"url", "method", "type", "filename", "queryParams", "bodyParams", "contentType", "headers"};
+        private java.util.List<JsluiceUrlRecord> rows = new java.util.ArrayList<>();
+
+        public void setRows(java.util.List<JsluiceUrlRecord> r) { this.rows = new java.util.ArrayList<>(r == null ? java.util.List.of() : r); fireTableDataChanged(); }
+        @Override public int getRowCount() { return rows.size(); }
+        @Override public int getColumnCount() { return cols.length; }
+        @Override public String getColumnName(int column) { return cols[column]; }
+        @Override public Object getValueAt(int rowIndex, int columnIndex) {
+            JsluiceUrlRecord r = rows.get(rowIndex);
+            return switch (columnIndex) {
+                case 0 -> r.url == null ? "" : r.url;
+                case 1 -> r.method == null ? "" : r.method;
+                case 2 -> r.type == null ? "" : r.type;
+                case 3 -> r.filename == null ? "" : r.filename;
+                case 4 -> r.queryParams == null || r.queryParams.isEmpty() ? "" : String.join(", ", r.queryParams);
+                case 5 -> r.bodyParams == null || r.bodyParams.isEmpty() ? "" : String.join(", ", r.bodyParams);
+                case 6 -> r.contentType == null ? "" : r.contentType;
+                case 7 -> r.headers == null || r.headers.isEmpty() ? "" : r.headers.toString();
+                default -> "";
+            };
         }
     }
 }

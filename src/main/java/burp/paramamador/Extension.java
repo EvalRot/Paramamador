@@ -21,6 +21,7 @@ import burp.paramamador.datastore.DataStore;
 import burp.paramamador.scanner.SiteTreeScanner;
 import burp.paramamador.ui.ParamamadorTab;
 import burp.paramamador.util.IOUtils;
+import burp.paramamador.integrations.JsluiceService;
 
 import javax.swing.*;
 import java.awt.*;
@@ -58,6 +59,7 @@ public class Extension implements BurpExtension {
 
     private ParamamadorTab tab;
     private SiteTreeScanner siteTreeScanner;
+    private JsluiceService jsluiceService;
 
     private final AtomicBoolean started = new AtomicBoolean(false);
 
@@ -106,6 +108,16 @@ public class Extension implements BurpExtension {
             log.logToError("Failed to load scanned JS list: " + t.getMessage());
         }
 
+        // Initialize jsluice integration (if enabled)
+        if (settings.isEnableJsluice()) {
+            try {
+                this.jsluiceService = new JsluiceService(store, settings, scope, log);
+                this.jsluiceService.tryInit();
+            } catch (Throwable t) {
+                log.logToError("Failed to init jsluice service: " + t.getMessage());
+            }
+        }
+
         // Start scheduled autosave
         scheduler.scheduleAtFixedRate(this::saveAllSafe, settings.getAutoSaveSeconds(), settings.getAutoSaveSeconds(), TimeUnit.SECONDS);
 
@@ -151,7 +163,7 @@ public class Extension implements BurpExtension {
             } catch (Throwable t) {
                 log.logToError("Rescan failed: " + t.getMessage());
             }
-        }, this::saveAllSafe);
+        }, this::saveAllSafe, jsluiceService);
         this.suiteTabReg = ui.registerSuiteTab("paramamador", tab.getComponent());
 
         // Settings panel (persisted by Burp). Keys are human-readable.
@@ -178,7 +190,7 @@ public class Extension implements BurpExtension {
 
         // Site tree scanner depends on API + analyzers
         JsEndpointAnalyzer jsAnalyzer = new JsEndpointAnalyzer(store, settings, scope, log);
-        this.siteTreeScanner = new SiteTreeScanner(api, jsAnalyzer, settings, store, log);
+        this.siteTreeScanner = new SiteTreeScanner(api, jsAnalyzer, settings, store, log, jsluiceService);
 
         // Register HTTP handler for passive analysis
         this.httpHandlerReg = api.http().registerHttpHandler(new PassiveHttpHandler());
@@ -204,6 +216,7 @@ public class Extension implements BurpExtension {
         if (unloadReg != null) unloadReg.deregister();
         if (scheduler != null) scheduler.shutdownNow();
         if (jsExecutor != null) jsExecutor.shutdownNow();
+        if (jsluiceService != null) jsluiceService.shutdown();
         log.logToOutput("Paramamador unloaded");
     }
 
@@ -294,6 +307,21 @@ public class Extension implements BurpExtension {
                 JCheckBox loadPrev = new JCheckBox("Load previous results from export directory");
                 loadPrev.setSelected(false);
 
+                JCheckBox enableJsluice = new JCheckBox("Enable AST scanning with jsluice");
+                enableJsluice.setSelected(settings.isEnableJsluice());
+
+                JTextField goBinField = new JTextField(settings.getGoBinDir() == null ? "" : settings.getGoBinDir().toString(), 30);
+                JButton goBinBrowse = new JButton("Browse...");
+                goBinBrowse.addActionListener(e -> {
+                    JFileChooser fc = new JFileChooser();
+                    fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                    try { if (settings.getGoBinDir() != null) fc.setCurrentDirectory(settings.getGoBinDir().toFile()); } catch (Throwable ignored) {}
+                    int res = fc.showOpenDialog(null);
+                    if (res == JFileChooser.APPROVE_OPTION && fc.getSelectedFile() != null) {
+                        goBinField.setText(fc.getSelectedFile().getAbsolutePath());
+                    }
+                });
+
                 JPanel panel = new JPanel(new GridBagLayout());
                 GridBagConstraints c = new GridBagConstraints();
                 c.insets = new Insets(4,4,4,4);
@@ -316,6 +344,14 @@ public class Extension implements BurpExtension {
                 // Load previous results checkbox
                 c.gridx = 0; c.gridy = row; c.gridwidth = 2; panel.add(loadPrev, c); row++; c.gridwidth = 1;
 
+                // jsluice enable + Go bin dir
+                c.gridx = 0; c.gridy = row; c.gridwidth = 2; panel.add(enableJsluice, c); row++; c.gridwidth = 1;
+                c.gridx = 0; c.gridy = row; panel.add(new JLabel("Go bin directory (optional)"), c);
+                JPanel goBinPanel = new JPanel(new BorderLayout());
+                goBinPanel.add(goBinField, BorderLayout.CENTER);
+                goBinPanel.add(goBinBrowse, BorderLayout.EAST);
+                c.gridx = 1; panel.add(goBinPanel, c); row++;
+
                 int option = JOptionPane.showConfirmDialog(null, panel, "Paramamador Setup", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
                 if (option == JOptionPane.OK_OPTION) {
                     String baseName = nameField.getText();
@@ -325,6 +361,9 @@ public class Extension implements BurpExtension {
                     String gdir = globalDirField.getText();
                     if (gdir != null && !gdir.isBlank()) settings.setGlobalExportDir(java.nio.file.Paths.get(gdir.trim()));
                     settings.setLoadPreviousOnStartup(loadPrev.isSelected());
+                    settings.setEnableJsluice(enableJsluice.isSelected());
+                    String goBin = goBinField.getText();
+                    if (goBin != null && !goBin.isBlank()) settings.setGoBinDir(java.nio.file.Paths.get(goBin.trim()));
                 }
             } catch (Throwable t) {
                 log.logToError("Setup dialog error: " + t.getMessage());
@@ -405,6 +444,11 @@ public class Extension implements BurpExtension {
                     String body = response.bodyToString();
                     int sizeKb = body != null ? body.length() / 1024 : 0;
                     boolean inScope = response.initiatingRequest() != null && response.initiatingRequest().isInScope();
+
+                    // Enqueue for jsluice AST analysis if enabled
+                    if (jsluiceService != null && body != null && !body.isBlank()) {
+                        try { jsluiceService.enqueue(url, referer, body, inScope); } catch (Throwable ignored) {}
+                    }
 
                     if (sizeKb <= settings.getMaxInlineJsKb()) {
                         jsAnalyzer.extractEndpoints(url, referer, body, inScope);

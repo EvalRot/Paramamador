@@ -16,6 +16,7 @@ public class ParameterRecord {
     public long firstSeen;
     public long lastSeen;
     public boolean onlyInCode = false;
+    public boolean falsePositive = false;
 
     public ParameterRecord(String name) {
         this.name = name;
@@ -34,4 +35,3 @@ public class ParameterRecord {
         if (exampleValues.size() < 3 && exampleValues.stream().noneMatch(v::equals)) exampleValues.add(v);
     }
 }
-

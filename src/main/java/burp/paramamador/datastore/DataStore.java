@@ -61,7 +61,10 @@ public class DataStore {
     }
 
     public List<ParameterRecord> snapshotParameters() {
-        return parameters.values().stream().sorted(Comparator.comparing(r -> r.name)).collect(toList());
+        return parameters.values().stream()
+                .filter(p -> !p.falsePositive)
+                .sorted(Comparator.comparing(r -> r.name))
+                .collect(toList());
     }
 
     public List<EndpointRecord> snapshotEndpoints() {
@@ -166,6 +169,7 @@ public class DataStore {
                     if (incoming.firstSeen > 0) r.firstSeen = r.firstSeen == 0 ? incoming.firstSeen : Math.min(r.firstSeen, incoming.firstSeen);
                     if (incoming.lastSeen > 0) r.lastSeen = Math.max(r.lastSeen, incoming.lastSeen);
                     r.onlyInCode = r.onlyInCode || incoming.onlyInCode;
+                    r.falsePositive = r.falsePositive || incoming.falsePositive;
                 }
             }
         }
@@ -174,5 +178,11 @@ public class DataStore {
     public void clearAll() {
         parameters.clear();
         endpoints.clear();
+    }
+
+    public void markParameterFalsePositive(String name, boolean value) {
+        if (name == null || name.isBlank()) return;
+        ParameterRecord r = parameters.get(name);
+        if (r != null) r.falsePositive = value;
     }
 }
