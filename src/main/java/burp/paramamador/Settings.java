@@ -6,7 +6,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
@@ -91,6 +93,68 @@ public class Settings {
     public Path jsluiceScannedFilePath() { return exportDir.resolve("paramamador_jsluice_scanned.txt"); }
     public Path jsluiceStoreDir() { return exportDir.resolve(jsluiceStoreSubdir); }
     public Path jsluiceResultsDir() { return exportDir.resolve("jsluice").resolve("results"); }
+    // JS URL -> Referer URL mapping for Send-to-Repeater defaults
+    public Path jsReferersFilePath() { return exportDir.resolve("paramamador_js_referers.tsv"); }
+    // Global list of user-entered Host header values for Send-to-Repeater
+    public Path globalUserHostsFilePath() { return globalExportDir.resolve("paramamador_user_hosts.txt"); }
+
+    // Default values for path variables like :client, :companyCode
+    private final Map<String,String> variableDefaults = Collections.synchronizedMap(new LinkedHashMap<>());
+    public Map<String,String> getVariableDefaults() {
+        synchronized (variableDefaults) { return new LinkedHashMap<>(variableDefaults); }
+    }
+    public void addVariableDefault(String name, String value) {
+        if (name == null || name.isBlank()) return;
+        String n = name.startsWith(":") ? name.substring(1) : name;
+        synchronized (variableDefaults) { variableDefaults.put(n.trim(), value == null ? "" : value.trim()); }
+    }
+    public void removeVariableDefault(String name) {
+        if (name == null || name.isBlank()) return;
+        String n = name.startsWith(":") ? name.substring(1) : name;
+        synchronized (variableDefaults) { variableDefaults.remove(n.trim()); }
+    }
+    public Path variableDefaultsFilePath() { return exportDir.resolve("paramamador_variable_defaults.tsv"); }
+    public synchronized void loadVariableDefaultsFromFile() {
+        try {
+            Path file = variableDefaultsFilePath();
+            java.nio.file.Files.createDirectories(file.getParent());
+            if (!java.nio.file.Files.isRegularFile(file)) {
+                saveVariableDefaultsToFile();
+                return;
+            }
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8);
+            LinkedHashMap<String,String> map = new LinkedHashMap<>();
+            if (lines != null) {
+                for (String line : lines) {
+                    if (line == null) continue;
+                    String t = line.trim();
+                    if (t.isEmpty()) continue;
+                    int tab = t.indexOf('\t');
+                    if (tab <= 0) continue;
+                    String key = t.substring(0, tab).trim();
+                    String val = t.substring(tab + 1).trim();
+                    if (!key.isEmpty()) map.put(key, val);
+                }
+            }
+            synchronized (variableDefaults) {
+                variableDefaults.clear();
+                variableDefaults.putAll(map);
+            }
+        } catch (Throwable ignored) {}
+    }
+    public synchronized void saveVariableDefaultsToFile() {
+        try {
+            Path file = variableDefaultsFilePath();
+            java.nio.file.Files.createDirectories(file.getParent());
+            java.util.List<String> out = new java.util.ArrayList<>();
+            synchronized (variableDefaults) {
+                for (Map.Entry<String,String> e : variableDefaults.entrySet()) {
+                    out.add(e.getKey() + "\t" + (e.getValue() == null ? "" : e.getValue()));
+                }
+            }
+            java.nio.file.Files.write(file, out, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {}
+    }
 
     public boolean isLoadPreviousOnStartup() { return loadPreviousOnStartup; }
     public void setLoadPreviousOnStartup(boolean v) { this.loadPreviousOnStartup = v; }

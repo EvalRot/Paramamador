@@ -108,6 +108,20 @@ public class Extension implements BurpExtension {
             log.logToError("Failed to load scanned JS list: " + t.getMessage());
         }
 
+        // Initialize referer tracker (for JS URL -> Referer mapping used by Send-to-Repeater UI)
+        try {
+            burp.paramamador.util.RefererTracker.init(settings);
+        } catch (Throwable t) {
+            log.logToError("Failed to init RefererTracker: " + t.getMessage());
+        }
+
+        // Load variable defaults for :vars in endpoints
+        try {
+            settings.loadVariableDefaultsFromFile();
+        } catch (Throwable t) {
+            log.logToError("Failed to load variable defaults: " + t.getMessage());
+        }
+
         // Initialize jsluice integration (if enabled)
         if (settings.isEnableJsluice()) {
             try {
@@ -163,7 +177,16 @@ public class Extension implements BurpExtension {
             } catch (Throwable t) {
                 log.logToError("Rescan failed: " + t.getMessage());
             }
-        }, this::saveAllSafe, jsluiceService);
+        }, this::saveAllSafe, jsluiceService,
+                // Sender to Repeater for the Send-to-Repeater dialog
+                (req) -> {
+                    try {
+                        api.repeater().sendToRepeater(req, "Paramamador");
+                    } catch (Throwable t) {
+                        log.logToError("Send to Repeater failed: " + t.getMessage());
+                    }
+                }
+        );
         this.suiteTabReg = ui.registerSuiteTab("paramamador", tab.getComponent());
 
         // Settings panel (persisted by Burp). Keys are human-readable.
@@ -441,6 +464,9 @@ public class Extension implements BurpExtension {
                         || (url != null && url.toLowerCase().endsWith(".js"));
 
                 if (looksLikeJs) {
+                    try {
+                        burp.paramamador.util.RefererTracker.record(url, referer);
+                    } catch (Throwable ignored) {}
                     String body = response.bodyToString();
                     int sizeKb = body != null ? body.length() / 1024 : 0;
                     boolean inScope = response.initiatingRequest() != null && response.initiatingRequest().isInScope();

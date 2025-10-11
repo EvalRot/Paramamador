@@ -6,6 +6,8 @@ import burp.paramamador.datastore.EndpointRecord;
 import burp.paramamador.datastore.ParameterRecord;
 import burp.paramamador.integrations.JsluiceService;
 import burp.paramamador.integrations.JsluiceUrlRecord;
+import burp.paramamador.util.RefererTracker;
+import burp.api.montoya.http.message.requests.HttpRequest;
 
 import javax.swing.*;
 import javax.swing.table.AbstractTableModel;
@@ -31,6 +33,7 @@ public class ParamamadorTab {
     private final Runnable rescanAction;
     private final Runnable saveAction;
     private final JsluiceService jsluiceService;
+    private final java.util.function.Consumer<HttpRequest> repeaterSender;
 
     private final JPanel root = new JPanel(new BorderLayout());
 
@@ -63,13 +66,15 @@ public class ParamamadorTab {
     private final JSpinner maxQueue = new JSpinner(new SpinnerNumberModel(200, 50, 10_000, 10));
     private final JTextField exportDir = new JTextField();
     private final DefaultListModel<String> ignoredModel = new DefaultListModel<>();
+    private final DefaultListModel<String> varDefaultsModel = new DefaultListModel<>();
 
-    public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction, JsluiceService jsluiceService) {
+    public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction, JsluiceService jsluiceService, java.util.function.Consumer<HttpRequest> repeaterSender) {
         this.store = store;
         this.settings = settings;
         this.rescanAction = rescanAction;
         this.saveAction = saveAction;
         this.jsluiceService = jsluiceService;
+        this.repeaterSender = repeaterSender;
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Parameters", buildParametersPanel());
@@ -119,6 +124,7 @@ public class ParamamadorTab {
             exportDir.setText(settings.getExportDir().toString());
             ignoredModel.clear();
             for (String s : settings.getGlobalIgnoredSources()) ignoredModel.addElement(s);
+            refreshVarDefaultsList();
         });
     }
 
@@ -310,6 +316,16 @@ public class ParamamadorTab {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(sb.toString()), null);
         });
         endpointPopup.add(endpointCopyItem);
+        JMenuItem endpointSendRepeater = new JMenuItem("Send to Repeater");
+        endpointSendRepeater.addActionListener(e -> {
+            int r = endpointTable.getSelectedRow();
+            if (r >= 0) {
+                int m = endpointTable.convertRowIndexToModel(r);
+                EndpointRecord rec = endpointModel.rows.get(m);
+                openSendDialogForEndpoint(rec);
+            }
+        });
+        endpointPopup.add(endpointSendRepeater);
         JMenuItem endpointFalsePosItem = new JMenuItem("Mark as False Positive");
         endpointFalsePosItem.addActionListener(e -> {
             int[] rows = endpointTable.getSelectedRows();
@@ -349,6 +365,15 @@ public class ParamamadorTab {
             }
             @Override public void mousePressed(MouseEvent e) { if (e.isPopupTrigger()) adjustSelection(e); }
             @Override public void mouseReleased(MouseEvent e) { if (e.isPopupTrigger()) adjustSelection(e); }
+        });
+
+        sendToRepeater.addActionListener(e -> {
+            int r = endpointTable.getSelectedRow();
+            if (r >= 0) {
+                int m = endpointTable.convertRowIndexToModel(r);
+                EndpointRecord rec = endpointModel.rows.get(m);
+                openSendDialogForEndpoint(rec);
+            }
         });
 
         JPanel top = new JPanel(new BorderLayout());
@@ -440,6 +465,16 @@ public class ParamamadorTab {
             }
             if (changed) settings.saveGlobalIgnoredValuesToGlobalDir();
         });
+        JMenuItem notSureSend = new JMenuItem("Send to Repeater");
+        notSureSend.addActionListener(e -> {
+            int r = notSureTable.getSelectedRow();
+            if (r >= 0) {
+                int m = notSureTable.convertRowIndexToModel(r);
+                EndpointRecord rec = notSureModel.rows.get(m);
+                openSendDialogForEndpoint(rec);
+            }
+        });
+        notSurePopup.add(notSureSend);
         notSurePopup.add(notSureAddToGlobalIgnored);
         notSureTable.setComponentPopupMenu(notSurePopup);
         notSureTable.addMouseListener(new MouseAdapter() {
@@ -494,6 +529,42 @@ public class ParamamadorTab {
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         actions.add(copy);
         top.add(actions, BorderLayout.EAST);
+
+        // Right-click popup for jsluice table (Copy URL, Send to Repeater)
+        JPopupMenu jsluicePopup = new JPopupMenu();
+        JMenuItem jCopyItem = new JMenuItem("Copy URL");
+        jCopyItem.addActionListener(e -> {
+            int[] rows = jsluiceTable.getSelectedRows();
+            StringBuilder sb1 = new StringBuilder();
+            for (int r : rows) {
+                int m = jsluiceTable.convertRowIndexToModel(r);
+                String u = jsluiceModel.rows.get(m).url;
+                sb1.append(u == null ? "" : u).append('\n');
+            }
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(sb1.toString()), null);
+        });
+        JMenuItem jSendItem = new JMenuItem("Send to Repeater");
+        jSendItem.addActionListener(e -> {
+            int r = jsluiceTable.getSelectedRow();
+            if (r >= 0) {
+                int m = jsluiceTable.convertRowIndexToModel(r);
+                JsluiceUrlRecord rec = jsluiceModel.rows.get(m);
+                openSendDialogForJsluice(rec);
+            }
+        });
+        jsluicePopup.add(jCopyItem);
+        jsluicePopup.add(jSendItem);
+        jsluiceTable.setComponentPopupMenu(jsluicePopup);
+        jsluiceTable.addMouseListener(new MouseAdapter() {
+            private void adjustSelection(MouseEvent e) {
+                int row = jsluiceTable.rowAtPoint(e.getPoint());
+                if (row >= 0 && !jsluiceTable.getSelectionModel().isSelectedIndex(row)) {
+                    jsluiceTable.setRowSelectionInterval(row, row);
+                }
+            }
+            @Override public void mousePressed(MouseEvent e) { if (e.isPopupTrigger()) adjustSelection(e); }
+            @Override public void mouseReleased(MouseEvent e) { if (e.isPopupTrigger()) adjustSelection(e); }
+        });
 
         p.add(top, BorderLayout.NORTH);
         p.add(new JScrollPane(jsluiceTable), BorderLayout.CENTER);
@@ -554,6 +625,42 @@ public class ParamamadorTab {
         c.gridx = 1; c.gridy = row; form.add(new JScrollPane(ignored), c); row++;
         c.gridx = 1; c.gridy = row; form.add(buttons, c); row++;
 
+        // Path variable defaults (e.g., :client -> acme)
+        c.gridx = 0; c.gridy = row; form.add(new JLabel("Path variable defaults"), c);
+        JList<String> varDefaults = new JList<>(varDefaultsModel);
+        JPanel varBtns = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JTextField varName = new JTextField(12);
+        JTextField varValue = new JTextField(12);
+        JButton varAdd = new JButton("Add/Update");
+        JButton varRemove = new JButton("Remove selected");
+        varAdd.addActionListener(e -> {
+            String n = varName.getText() == null ? "" : varName.getText().trim();
+            String v = varValue.getText() == null ? "" : varValue.getText().trim();
+            if (!n.isEmpty()) {
+                settings.addVariableDefault(n, v);
+                settings.saveVariableDefaultsToFile();
+                refreshVarDefaultsList();
+                varName.setText(""); varValue.setText("");
+            }
+        });
+        varRemove.addActionListener(e -> {
+            for (String s : varDefaults.getSelectedValuesList()) {
+                int eq = s.indexOf('=');
+                String key = eq >= 0 ? s.substring(0, eq) : s;
+                settings.removeVariableDefault(key);
+            }
+            settings.saveVariableDefaultsToFile();
+            refreshVarDefaultsList();
+        });
+        varBtns.add(new JLabel("Name (:name)"));
+        varBtns.add(varName);
+        varBtns.add(new JLabel("Value"));
+        varBtns.add(varValue);
+        varBtns.add(varAdd);
+        varBtns.add(varRemove);
+        c.gridx = 1; c.gridy = row; form.add(new JScrollPane(varDefaults), c); row++;
+        c.gridx = 1; c.gridy = row; form.add(varBtns, c); row++;
+
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         JButton apply = new JButton("Apply");
         JButton clear = new JButton("Clear data");
@@ -595,6 +702,67 @@ public class ParamamadorTab {
         p.add(form, BorderLayout.CENTER);
         p.add(actions, BorderLayout.SOUTH);
         return p;
+    }
+
+    private void openSendDialogForEndpoint(EndpointRecord rec) {
+        if (rec == null) return;
+        String ep = rec.endpointString == null ? "" : rec.endpointString.trim();
+        String path = applyVarDefaults(extractPath(ep));
+        RefererTracker.HostOption ref = RefererTracker.refererOption(rec.source);
+        RefererTracker.HostOption js = RefererTracker.jsOption(rec.source);
+        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, repeaterSender);
+        dlg.setVisible(true);
+    }
+
+    private void openSendDialogForJsluice(JsluiceUrlRecord rec) {
+        if (rec == null) return;
+        String url = rec.url == null ? "" : rec.url.trim();
+        String path = applyVarDefaults(extractPath(url));
+        RefererTracker.HostOption ref = RefererTracker.parseHostOption(rec.refererUrl);
+        RefererTracker.HostOption js = RefererTracker.parseHostOption(rec.sourceJsUrl);
+        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, repeaterSender);
+        dlg.setVisible(true);
+    }
+
+    private static String extractPath(String maybeUrlOrPath) {
+        if (maybeUrlOrPath == null || maybeUrlOrPath.isBlank()) return "/";
+        String s = maybeUrlOrPath.trim();
+        try {
+            if (s.toLowerCase(java.util.Locale.ROOT).startsWith("http://") || s.toLowerCase(java.util.Locale.ROOT).startsWith("https://")) {
+                java.net.URI u = java.net.URI.create(s);
+                String p = u.getRawPath();
+                if (p == null || p.isBlank()) p = "/";
+                String q = u.getRawQuery();
+                if (q != null && !q.isBlank()) return p + "?" + q;
+                return p;
+            }
+        } catch (Throwable ignored) {}
+        // treat as path
+        if (!s.startsWith("/")) s = "/" + s;
+        return s;
+    }
+
+    private void refreshVarDefaultsList() {
+        varDefaultsModel.clear();
+        java.util.Map<String,String> m = settings.getVariableDefaults();
+        for (java.util.Map.Entry<String,String> e : m.entrySet()) varDefaultsModel.addElement(e.getKey() + "=" + (e.getValue()==null?"":e.getValue()));
+    }
+
+    private String applyVarDefaults(String path) {
+        if (path == null || path.isBlank()) return path;
+        String p = path;
+        java.util.Map<String,String> defs = settings.getVariableDefaults();
+        if (defs.isEmpty()) return p;
+        String[] parts = p.split("\\?", 2);
+        String head = parts[0];
+        for (java.util.Map.Entry<String,String> e : defs.entrySet()) {
+            String name = e.getKey();
+            String val = e.getValue();
+            if (name == null || name.isBlank()) continue;
+            head = head.replace(":" + name, val == null ? "" : val);
+        }
+        if (parts.length > 1) return head + "?" + parts[1];
+        return head;
     }
 
     private void applySettings() {

@@ -57,6 +57,7 @@ public class SiteTreeScanner {
                     try {
                         if (jsluiceService != null && body != null && !body.isBlank()) {
                             String referer = rr.request().headerValue("Referer");
+                            try { burp.paramamador.util.RefererTracker.record(url, referer); } catch (Throwable ignored) {}
                             jsluiceService.enqueue(url, referer, body, inScope);
                         }
                     } catch (Throwable ignored) {}

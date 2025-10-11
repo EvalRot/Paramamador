@@ -257,7 +257,7 @@ public class JsluiceService {
                 // Keep jsluice endpoints out of main endpoints table; store them in this service only
                 String key = (url == null ? "" : url) + "|" + method + "|" + type + "|" + filename;
                 if (resultKeys.add(key)) {
-                    results.add(new JsluiceUrlRecord(url, qparams, bparams, method, type, filename, contentType, headers));
+                    results.add(new JsluiceUrlRecord(url, qparams, bparams, method, type, filename, contentType, headers, sourceUrl, referer));
                 }
             }
         } catch (Throwable e) {
