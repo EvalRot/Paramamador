@@ -34,6 +34,8 @@ public class ParamamadorTab {
     private final Runnable saveAction;
     private final JsluiceService jsluiceService;
     private final java.util.function.Consumer<HttpRequest> repeaterSender;
+    private final java.util.function.Function<String,String> lastAuthFinder;
+    private final java.util.function.Function<String,String> lastCookieFinder;
 
     private final JPanel root = new JPanel(new BorderLayout());
 
@@ -67,14 +69,19 @@ public class ParamamadorTab {
     private final JTextField exportDir = new JTextField();
     private final DefaultListModel<String> ignoredModel = new DefaultListModel<>();
     private final DefaultListModel<String> varDefaultsModel = new DefaultListModel<>();
+    private final DefaultListModel<String> defaultHeadersModel = new DefaultListModel<>();
 
-    public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction, JsluiceService jsluiceService, java.util.function.Consumer<HttpRequest> repeaterSender) {
+    public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction, JsluiceService jsluiceService, java.util.function.Consumer<HttpRequest> repeaterSender,
+                          java.util.function.Function<String,String> lastAuthFinder,
+                          java.util.function.Function<String,String> lastCookieFinder) {
         this.store = store;
         this.settings = settings;
         this.rescanAction = rescanAction;
         this.saveAction = saveAction;
         this.jsluiceService = jsluiceService;
         this.repeaterSender = repeaterSender;
+        this.lastAuthFinder = lastAuthFinder;
+        this.lastCookieFinder = lastCookieFinder;
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Parameters", buildParametersPanel());
@@ -109,8 +116,19 @@ public class ParamamadorTab {
     public void refreshAll() {
         SwingUtilities.invokeLater(() -> {
             paramModel.setRows(store.snapshotParameters());
-            endpointModel.setRows(store.snapshotEndpoints());
-            notSureModel.setRows(store.snapshotNotSureEndpoints());
+            java.util.Set<String> ignored = new java.util.HashSet<>();
+            for (String s : settings.getGlobalIgnoredValues()) if (s != null && !s.isBlank()) ignored.add(s.trim());
+            java.util.List<EndpointRecord> eps = store.snapshotEndpoints();
+            if (!ignored.isEmpty()) {
+                eps = eps.stream().filter(e -> e == null || e.endpointString == null || !ignored.contains(e.endpointString.trim())).toList();
+            }
+            endpointModel.setRows(eps);
+
+            java.util.List<EndpointRecord> ns = store.snapshotNotSureEndpoints();
+            if (!ignored.isEmpty()) {
+                ns = ns.stream().filter(e -> e == null || e.endpointString == null || !ignored.contains(e.endpointString.trim())).toList();
+            }
+            notSureModel.setRows(ns);
             if (jsluiceService != null) jsluiceModel.setRows(jsluiceService.snapshotResults());
         });
     }
@@ -125,6 +143,7 @@ public class ParamamadorTab {
             ignoredModel.clear();
             for (String s : settings.getGlobalIgnoredSources()) ignoredModel.addElement(s);
             refreshVarDefaultsList();
+            refreshDefaultHeadersList();
         });
     }
 
@@ -349,10 +368,14 @@ public class ParamamadorTab {
                 String val = rec.endpointString;
                 if (val != null && !val.isBlank()) {
                     settings.addGlobalIgnoredValue(val.trim());
+                    pruneEndpointEverywhere(val.trim());
                     changed = true;
                 }
             }
-            if (changed) settings.saveGlobalIgnoredValuesToGlobalDir();
+            if (changed) {
+                settings.saveGlobalIgnoredValuesToGlobalDir();
+                refreshAll();
+            }
         });
         endpointPopup.add(endpointAddToGlobalIgnored);
         endpointTable.setComponentPopupMenu(endpointPopup);
@@ -460,10 +483,14 @@ public class ParamamadorTab {
                 String val = rec.endpointString;
                 if (val != null && !val.isBlank()) {
                     settings.addGlobalIgnoredValue(val.trim());
+                    pruneEndpointEverywhere(val.trim());
                     changed = true;
                 }
             }
-            if (changed) settings.saveGlobalIgnoredValuesToGlobalDir();
+            if (changed) {
+                settings.saveGlobalIgnoredValuesToGlobalDir();
+                refreshAll();
+            }
         });
         JMenuItem notSureSend = new JMenuItem("Send to Repeater");
         notSureSend.addActionListener(e -> {
@@ -661,6 +688,42 @@ public class ParamamadorTab {
         c.gridx = 1; c.gridy = row; form.add(new JScrollPane(varDefaults), c); row++;
         c.gridx = 1; c.gridy = row; form.add(varBtns, c); row++;
 
+        // Default request headers (name:value) added to Send-to-Repeater
+        c.gridx = 0; c.gridy = row; form.add(new JLabel("Default request headers"), c);
+        JList<String> defHeaders = new JList<>(defaultHeadersModel);
+        JPanel dhBtns = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JTextField dhName = new JTextField(12);
+        JTextField dhValue = new JTextField(16);
+        JButton dhAdd = new JButton("Add/Update");
+        JButton dhRemove = new JButton("Remove selected");
+        dhAdd.addActionListener(e -> {
+            String n = dhName.getText() == null ? "" : dhName.getText().trim();
+            String v = dhValue.getText() == null ? "" : dhValue.getText().trim();
+            if (!n.isEmpty()) {
+                settings.addDefaultHeader(n, v);
+                settings.saveDefaultHeadersToFile();
+                refreshDefaultHeadersList();
+                dhName.setText(""); dhValue.setText("");
+            }
+        });
+        dhRemove.addActionListener(e -> {
+            for (String s : defHeaders.getSelectedValuesList()) {
+                int idx = s.indexOf(':');
+                String key = idx >= 0 ? s.substring(0, idx).trim() : s.trim();
+                settings.removeDefaultHeader(key);
+            }
+            settings.saveDefaultHeadersToFile();
+            refreshDefaultHeadersList();
+        });
+        dhBtns.add(new JLabel("Header"));
+        dhBtns.add(dhName);
+        dhBtns.add(new JLabel("Value"));
+        dhBtns.add(dhValue);
+        dhBtns.add(dhAdd);
+        dhBtns.add(dhRemove);
+        c.gridx = 1; c.gridy = row; form.add(new JScrollPane(defHeaders), c); row++;
+        c.gridx = 1; c.gridy = row; form.add(dhBtns, c); row++;
+
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         JButton apply = new JButton("Apply");
         JButton clear = new JButton("Clear data");
@@ -710,7 +773,7 @@ public class ParamamadorTab {
         String path = applyVarDefaults(extractPath(ep));
         RefererTracker.HostOption ref = RefererTracker.refererOption(rec.source);
         RefererTracker.HostOption js = RefererTracker.jsOption(rec.source);
-        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, repeaterSender);
+        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
         dlg.setVisible(true);
     }
 
@@ -720,7 +783,7 @@ public class ParamamadorTab {
         String path = applyVarDefaults(extractPath(url));
         RefererTracker.HostOption ref = RefererTracker.parseHostOption(rec.refererUrl);
         RefererTracker.HostOption js = RefererTracker.parseHostOption(rec.sourceJsUrl);
-        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, repeaterSender);
+        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
         dlg.setVisible(true);
     }
 
@@ -748,6 +811,12 @@ public class ParamamadorTab {
         for (java.util.Map.Entry<String,String> e : m.entrySet()) varDefaultsModel.addElement(e.getKey() + "=" + (e.getValue()==null?"":e.getValue()));
     }
 
+    private void refreshDefaultHeadersList() {
+        defaultHeadersModel.clear();
+        java.util.Map<String,String> m = settings.getDefaultHeaders();
+        for (java.util.Map.Entry<String,String> e : m.entrySet()) defaultHeadersModel.addElement(e.getKey() + ": " + (e.getValue()==null?"":e.getValue()));
+    }
+
     private String applyVarDefaults(String path) {
         if (path == null || path.isBlank()) return path;
         String p = path;
@@ -763,6 +832,21 @@ public class ParamamadorTab {
         }
         if (parts.length > 1) return head + "?" + parts[1];
         return head;
+    }
+
+    private void pruneEndpointEverywhere(String endpointValue) {
+        if (endpointValue == null || endpointValue.isBlank()) return;
+        String needle = endpointValue.trim();
+        try {
+            java.util.Iterator<java.util.Map.Entry<String, EndpointRecord>> it = store.endpoints().entrySet().iterator();
+            while (it.hasNext()) {
+                java.util.Map.Entry<String, EndpointRecord> en = it.next();
+                EndpointRecord rec = en.getValue();
+                if (rec != null && rec.endpointString != null && needle.equals(rec.endpointString.trim())) {
+                    it.remove();
+                }
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void applySettings() {

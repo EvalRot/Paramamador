@@ -156,6 +156,62 @@ public class Settings {
         } catch (Throwable ignored) {}
     }
 
+    // Default request headers to include in Send-to-Repeater (per project)
+    private final Map<String,String> defaultRequestHeaders = Collections.synchronizedMap(new LinkedHashMap<>());
+    public Map<String,String> getDefaultHeaders() {
+        synchronized (defaultRequestHeaders) { return new LinkedHashMap<>(defaultRequestHeaders); }
+    }
+    public void addDefaultHeader(String name, String value) {
+        if (name == null || name.isBlank()) return;
+        synchronized (defaultRequestHeaders) { defaultRequestHeaders.put(name.trim(), value == null ? "" : value.trim()); }
+    }
+    public void removeDefaultHeader(String name) {
+        if (name == null || name.isBlank()) return;
+        synchronized (defaultRequestHeaders) { defaultRequestHeaders.remove(name.trim()); }
+    }
+    public Path defaultHeadersFilePath() { return exportDir.resolve("paramamador_default_headers.tsv"); }
+    public synchronized void loadDefaultHeadersFromFile() {
+        try {
+            Path file = defaultHeadersFilePath();
+            java.nio.file.Files.createDirectories(file.getParent());
+            if (!java.nio.file.Files.isRegularFile(file)) {
+                saveDefaultHeadersToFile();
+                return;
+            }
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8);
+            LinkedHashMap<String,String> map = new LinkedHashMap<>();
+            if (lines != null) {
+                for (String line : lines) {
+                    if (line == null) continue;
+                    String t = line.trim();
+                    if (t.isEmpty()) continue;
+                    int tab = t.indexOf('\t');
+                    if (tab <= 0) continue;
+                    String key = t.substring(0, tab).trim();
+                    String val = t.substring(tab + 1).trim();
+                    if (!key.isEmpty()) map.put(key, val);
+                }
+            }
+            synchronized (defaultRequestHeaders) {
+                defaultRequestHeaders.clear();
+                defaultRequestHeaders.putAll(map);
+            }
+        } catch (Throwable ignored) {}
+    }
+    public synchronized void saveDefaultHeadersToFile() {
+        try {
+            Path file = defaultHeadersFilePath();
+            java.nio.file.Files.createDirectories(file.getParent());
+            java.util.List<String> out = new java.util.ArrayList<>();
+            synchronized (defaultRequestHeaders) {
+                for (Map.Entry<String,String> e : defaultRequestHeaders.entrySet()) {
+                    out.add(e.getKey() + "\t" + (e.getValue() == null ? "" : e.getValue()));
+                }
+            }
+            java.nio.file.Files.write(file, out, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {}
+    }
+
     public boolean isLoadPreviousOnStartup() { return loadPreviousOnStartup; }
     public void setLoadPreviousOnStartup(boolean v) { this.loadPreviousOnStartup = v; }
 

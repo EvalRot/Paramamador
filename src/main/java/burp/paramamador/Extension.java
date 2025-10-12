@@ -122,6 +122,13 @@ public class Extension implements BurpExtension {
             log.logToError("Failed to load variable defaults: " + t.getMessage());
         }
 
+        // Load default request headers
+        try {
+            settings.loadDefaultHeadersFromFile();
+        } catch (Throwable t) {
+            log.logToError("Failed to load default headers: " + t.getMessage());
+        }
+
         // Initialize jsluice integration (if enabled)
         if (settings.isEnableJsluice()) {
             try {
@@ -185,6 +192,36 @@ public class Extension implements BurpExtension {
                     } catch (Throwable t) {
                         log.logToError("Send to Repeater failed: " + t.getMessage());
                     }
+                },
+                // Latest Authorization header by host
+                (hostOnly) -> {
+                    try {
+                        var list = api.proxy().history();
+                        for (int i = list.size() - 1; i >= 0; i--) {
+                            var rr = list.get(i);
+                            String h = rr.request().headerValue("Host");
+                            if (hostMatches(h, hostOnly)) {
+                                String val = rr.request().headerValue("Authorization");
+                                if (val != null && !val.isBlank()) return val;
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    return null;
+                },
+                // Latest Cookie header by host
+                (hostOnly) -> {
+                    try {
+                        var list = api.proxy().history();
+                        for (int i = list.size() - 1; i >= 0; i--) {
+                            var rr = list.get(i);
+                            String h = rr.request().headerValue("Host");
+                            if (hostMatches(h, hostOnly)) {
+                                String val = rr.request().headerValue("Cookie");
+                                if (val != null && !val.isBlank()) return val;
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    return null;
                 }
         );
         this.suiteTabReg = ui.registerSuiteTab("paramamador", tab.getComponent());
@@ -228,6 +265,21 @@ public class Extension implements BurpExtension {
         });
 
         started.set(true);
+    }
+
+    private static boolean hostMatches(String headerHost, String targetHost) {
+        if (headerHost == null || targetHost == null) return false;
+        String a = headerHost.trim().toLowerCase(java.util.Locale.ROOT);
+        String b = targetHost.trim().toLowerCase(java.util.Locale.ROOT);
+        if (a.equals(b)) return true;
+        // If one has explicit port and the other doesn't, compare hostnames only
+        String ahost = a;
+        String bhost = b;
+        int ai = a.indexOf(':');
+        if (ai >= 0) ahost = a.substring(0, ai);
+        int bi = b.indexOf(':');
+        if (bi >= 0) bhost = b.substring(0, bi);
+        return ahost.equals(bhost);
     }
 
     private void shutdown() {
