@@ -5,6 +5,7 @@ import burp.api.montoya.scope.Scope;
 import burp.paramamador.Settings;
 import burp.paramamador.datastore.DataStore;
 import burp.paramamador.datastore.EndpointRecord;
+import burp.paramamador.util.RefererTracker;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
@@ -78,6 +79,8 @@ public class JsluiceService {
             Files.createDirectories(settings.jsluiceStoreDir());
             // Load previous scanned list
             loadScanned(settings.jsluiceScannedFilePath());
+            // Attempt to load previously saved jsluice results from disk
+            loadSavedResultsFromDir();
             // Start worker loop
             if (started.compareAndSet(false, true)) {
                 for (int i = 0; i < settings.getJsluiceWorkers(); i++) {
@@ -296,6 +299,29 @@ public class JsluiceService {
             String line = (url == null ? "" : url) + "\t" + hash + System.lineSeparator();
             synchronized (SCANNED_FILE_LOCK) {
                 Files.writeString(file, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void loadSavedResultsFromDir() {
+        try {
+            Path dir = settings.jsluiceResultsDir();
+            if (dir == null || !Files.isDirectory(dir)) return;
+            try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
+                stream.filter(p -> p != null && p.getFileName() != null && p.toString().toLowerCase(Locale.ROOT).endsWith(".json"))
+                        .forEach(p -> {
+                            try {
+                                String fileName = p.getFileName().toString();
+                                String hash = fileName.substring(0, Math.max(0, fileName.length() - ".json".length()));
+                                String sourceUrl = SCANNED_HASH_TO_URL.get(hash);
+                                String referer = RefererTracker.getRefererUrl(sourceUrl);
+                                String ndjson = Files.readString(p, StandardCharsets.UTF_8);
+                                boolean inScope = isUrlInScope(sourceUrl);
+                                if (ndjson != null && !ndjson.isBlank()) {
+                                    parseAndStoreNdjson(ndjson, sourceUrl, referer, inScope);
+                                }
+                            } catch (Throwable ignored) {}
+                        });
             }
         } catch (Throwable ignored) {}
     }
