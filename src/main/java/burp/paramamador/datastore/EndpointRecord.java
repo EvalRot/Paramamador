@@ -9,6 +9,7 @@ public class EndpointRecord {
     public final String source; // JS file URL this endpoint was found in
     public final Type type;
     public boolean inScope;
+    public String referer; // HTTP Referer used when fetching the JS resource
     public String contextSnippet;
     public String pattern; // regex used to capture this endpoint
     public boolean notSure;

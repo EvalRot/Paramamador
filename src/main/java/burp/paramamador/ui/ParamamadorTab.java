@@ -893,7 +893,7 @@ public class ParamamadorTab {
     }
 
     private static class EndpointTableModel extends AbstractTableModel {
-        private final String[] cols = {"Endpoint", "Source", "Type", "InScope", "FirstSeen", "Pattern"};
+        private final String[] cols = {"Endpoint", "Source", "Type", "Referer", "FirstSeen", "Pattern"};
         private List<EndpointRecord> rows = new ArrayList<>();
 
         public void setRows(List<EndpointRecord> records) { this.rows = new ArrayList<>(records == null ? List.of() : records); fireTableDataChanged(); }
@@ -906,7 +906,7 @@ public class ParamamadorTab {
                 case 0 -> displayEndpoint(r);
                 case 1 -> r.source == null ? "" : r.source;
                 case 2 -> r.type;
-                case 3 -> r.inScope;
+                case 3 -> r.referer == null ? "" : r.referer;
                 case 4 -> new java.util.Date(r.firstSeen);
                 case 5 -> r.pattern == null ? "" : r.pattern;
                 default -> "";

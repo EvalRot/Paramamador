@@ -87,7 +87,7 @@ public class JsEndpointAnalyzer {
         while (m.find()) {
             String url = m.group(1);
             boolean inScope = inScopeHint || isInScope(url) || isRefererInScope(referer);
-            addEndpoint(url, EndpointRecord.Type.ABSOLUTE, inScope, sourceUrl, context(js, m.start(), m.end()), FULL_URL.pattern(), false);
+            addEndpoint(url, EndpointRecord.Type.ABSOLUTE, inScope, sourceUrl, context(js, m.start(), m.end()), FULL_URL.pattern(), false, referer);
         }
 
         // Absolute paths
@@ -96,7 +96,7 @@ public class JsEndpointAnalyzer {
             String path = m.group(1);
             if (shouldIgnoreValue(path)) continue;
             boolean inScope = inScopeHint || isRefererInScope(referer);
-            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), ABS_PATH.pattern(), false);
+            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), ABS_PATH.pattern(), false, referer);
         }
 
         // Relative paths
@@ -105,7 +105,7 @@ public class JsEndpointAnalyzer {
             String path = m.group(1);
             if (shouldIgnoreValue(path)) continue;
             boolean inScope = inScopeHint || isRefererInScope(referer);
-            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), REL_PATH.pattern(), false);
+            addEndpoint(path, EndpointRecord.Type.RELATIVE, inScope, sourceUrl, context(js, m.start(1), m.end(1)), REL_PATH.pattern(), false, referer);
         }
 
         // Template literals: replace ${...} with EXPR
@@ -118,12 +118,12 @@ public class JsEndpointAnalyzer {
             while (innerUrl.find()) {
                 // Provide original (unmasked) template content as context snippet
                 addEndpoint(innerUrl.group(1), EndpointRecord.Type.TEMPLATE, inScopeHint || isRefererInScope(referer), sourceUrl,
-                        tpl, FULL_URL.pattern(), false);
+                        tpl, FULL_URL.pattern(), false, referer);
             }
             if (masked.startsWith("/")) {
                 // Provide original (unmasked) template content as context snippet
                 addEndpoint(masked, EndpointRecord.Type.TEMPLATE, inScopeHint || isRefererInScope(referer), sourceUrl,
-                        tpl, TEMPLATE.pattern(), false);
+                        tpl, TEMPLATE.pattern(), false, referer);
             }
         }
 
@@ -148,7 +148,7 @@ public class JsEndpointAnalyzer {
                 if (!candidate.isBlank()) {
                     if (shouldIgnoreValue(candidate)) continue;
                     EndpointRecord.Type type = candidate.startsWith("/") ? EndpointRecord.Type.RELATIVE : EndpointRecord.Type.CONCAT;
-                    addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()), p.pattern(), suspiciousLiteral);
+                    addEndpoint(candidate, type, inScopeHint || isRefererInScope(referer), sourceUrl, context(js, m.start(), m.end()), p.pattern(), suspiciousLiteral, referer);
                 }
             }
         }
@@ -190,7 +190,7 @@ public class JsEndpointAnalyzer {
         }
     }
 
-    private void addEndpoint(String value, EndpointRecord.Type type, boolean inScope, String source, String ctx, String pattern, boolean extraNotSure) {
+    private void addEndpoint(String value, EndpointRecord.Type type, boolean inScope, String source, String ctx, String pattern, boolean extraNotSure, String referer) {
         boolean notSure = false;
         try {
             // Rule 1: for ABS_PATH/REL_PATH derived (type RELATIVE and pattern equals ABS_PATH|REL_PATH),
@@ -217,7 +217,7 @@ public class JsEndpointAnalyzer {
             }
         } catch (Throwable ignored) {}
 
-        store.addOrUpdateEndpoint(value, type, inScope, source, ctx, pattern, notSure);
+        store.addOrUpdateEndpoint(value, type, inScope, source, ctx, pattern, notSure, referer);
         // Derive parameter names from query strings in the endpoint and mark them as only-in-code
         if (value != null) {
             int q = value.indexOf('?');

@@ -45,6 +45,10 @@ public class DataStore {
 
     // Endpoints
     public void addOrUpdateEndpoint(String endpoint, EndpointRecord.Type type, boolean inScope, String source, String context, String pattern, boolean notSure) {
+        addOrUpdateEndpoint(endpoint, type, inScope, source, context, pattern, notSure, null);
+    }
+
+    public void addOrUpdateEndpoint(String endpoint, EndpointRecord.Type type, boolean inScope, String source, String context, String pattern, boolean notSure, String referer) {
         if (endpoint == null || endpoint.isBlank()) return;
         String key = endpointKey(endpoint, source);
         EndpointRecord e = endpoints.computeIfAbsent(key, k -> new EndpointRecord(endpoint, source, type, inScope, context, pattern));
@@ -52,6 +56,9 @@ public class DataStore {
         if (context != null && (e.contextSnippet == null || e.contextSnippet.isBlank())) e.contextSnippet = context;
         if (pattern != null && (e.pattern == null || e.pattern.isBlank())) e.pattern = pattern;
         e.notSure = e.notSure || notSure;
+        if (e.referer == null || e.referer.isBlank()) {
+            if (referer != null && !referer.isBlank()) e.referer = referer;
+        }
     }
 
     public void markEndpointFalsePositive(String endpoint, String source, boolean value) {
@@ -130,7 +137,7 @@ public class DataStore {
                         }
                     }
                     if (ep == null || ep.isBlank()) continue;
-                    addOrUpdateEndpoint(ep, rec.type, rec.inScope, src, rec.contextSnippet, rec.pattern, rec.notSure);
+                    addOrUpdateEndpoint(ep, rec.type, rec.inScope, src, rec.contextSnippet, rec.pattern, rec.notSure, rec.referer);
                     if (rec.falsePositive) {
                         markEndpointFalsePositive(ep, src, true);
                     }
