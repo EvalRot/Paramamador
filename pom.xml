@@ -18,6 +18,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <shade.plugin.version>3.5.0</shade.plugin.version>
         <gson.version>2.10.1</gson.version>
+        <snakeyaml.version>2.2</snakeyaml.version>
         <!-- Montoya API version used by this template. You can change to match your SDK. -->
         <montoya.version>2025.8</montoya.version>
         <!-- Build jar name without version to simplify loading in Burp -->
@@ -43,6 +44,13 @@
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>${gson.version}</version>
+        </dependency>
+
+        <!-- SnakeYAML for external YAML config -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>${snakeyaml.version}</version>
         </dependency>
     </dependencies>
 
@@ -79,6 +87,11 @@
                                 <relocation>
                                     <pattern>com.google.gson</pattern>
                                     <shadedPattern>com.paramamador.shaded.gson</shadedPattern>
+                                </relocation>
+                                <!-- Relocate SnakeYAML to avoid conflicts -->
+                                <relocation>
+                                    <pattern>org.yaml.snakeyaml</pattern>
+                                    <shadedPattern>com.paramamador.shaded.snakeyaml</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>

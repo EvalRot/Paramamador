@@ -293,6 +293,7 @@ public class ParamamadorTab {
         JPanel p = new JPanel(new BorderLayout());
         JTextField filter = new JTextField();
         JButton copy = new JButton("Copy");
+        JButton addManual = new JButton("Add manually");
         JButton sendToRepeater = new JButton("Send to Repeater");
         JButton openInProxy = new JButton("Open in Proxy History");
 
@@ -399,11 +400,36 @@ public class ParamamadorTab {
             }
         });
 
+        addManual.addActionListener(e -> {
+            Window owner = SwingUtilities.getWindowAncestor(root);
+            AddManualEndpointsDialog dlg = new AddManualEndpointsDialog(owner, (data) -> {
+                try {
+                    java.util.List<String> eps = data.endpoints();
+                    if (eps == null || eps.isEmpty()) return;
+                    String source = data.sourceJs() == null ? "" : data.sourceJs().trim();
+                    String ref = data.referer() == null ? "" : data.referer().trim();
+                    for (String ep : eps) {
+                        if (ep == null) continue;
+                        String val = ep.trim();
+                        if (val.isEmpty()) continue;
+                        store.addOrUpdateEndpoint(val, EndpointRecord.Type.MANUALLY, true, source, null, null, false, ref);
+                    }
+                    // Persist and refresh UI
+                    try { saveAction.run(); } catch (Throwable ignored) {}
+                    refreshAll();
+                } catch (Throwable ex) {
+                    JOptionPane.showMessageDialog(root, "Failed to add endpoints: " + ex.getMessage(), "Paramamador", JOptionPane.ERROR_MESSAGE);
+                }
+            });
+            dlg.setVisible(true);
+        });
+
         JPanel top = new JPanel(new BorderLayout());
         top.add(new JLabel("Filter:"), BorderLayout.WEST);
         top.add(filter, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         actions.add(copy);
+        actions.add(addManual);
         actions.add(sendToRepeater);
         actions.add(openInProxy);
         top.add(actions, BorderLayout.EAST);
@@ -861,6 +887,7 @@ public class ParamamadorTab {
         // Refresh the Ignored Patterns list UI
         ignoredModel.clear();
         for (String s : settings.getGlobalIgnoredSources()) ignoredModel.addElement(s);
+        try { settings.saveToYaml(); } catch (Throwable ignored) {}
     }
 
     private void clearData() {
@@ -939,7 +966,7 @@ public class ParamamadorTab {
     }
 
     private static class JsluiceTableModel extends AbstractTableModel {
-        private final String[] cols = {"url", "method", "type", "filename", "queryParams", "bodyParams", "contentType", "headers"};
+        private final String[] cols = {"url", "method", "type", "filename", "Referer/Origin", "queryParams", "bodyParams", "contentType", "headers"};
         private java.util.List<JsluiceUrlRecord> rows = new java.util.ArrayList<>();
 
         public void setRows(java.util.List<JsluiceUrlRecord> r) { this.rows = new java.util.ArrayList<>(r == null ? java.util.List.of() : r); fireTableDataChanged(); }
@@ -953,10 +980,11 @@ public class ParamamadorTab {
                 case 1 -> r.method == null ? "" : r.method;
                 case 2 -> r.type == null ? "" : r.type;
                 case 3 -> r.filename == null ? "" : r.filename;
-                case 4 -> r.queryParams == null || r.queryParams.isEmpty() ? "" : String.join(", ", r.queryParams);
-                case 5 -> r.bodyParams == null || r.bodyParams.isEmpty() ? "" : String.join(", ", r.bodyParams);
-                case 6 -> r.contentType == null ? "" : r.contentType;
-                case 7 -> r.headers == null || r.headers.isEmpty() ? "" : r.headers.toString();
+                case 4 -> r.refererUrl == null ? "" : r.refererUrl;
+                case 5 -> r.queryParams == null || r.queryParams.isEmpty() ? "" : String.join(", ", r.queryParams);
+                case 6 -> r.bodyParams == null || r.bodyParams.isEmpty() ? "" : String.join(", ", r.bodyParams);
+                case 7 -> r.contentType == null ? "" : r.contentType;
+                case 8 -> r.headers == null || r.headers.isEmpty() ? "" : r.headers.toString();
                 default -> "";
             };
         }

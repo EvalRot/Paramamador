@@ -54,14 +54,16 @@ public class SiteTreeScanner {
                     String body = fetched.response().bodyToString();
                     // Determine inScope using the original request if possible
                     boolean inScope = rr.request().isInScope();
+                    String ref = rr.request().headerValue("Referer");
+                    String org = rr.request().headerValue("Origin");
+                    String referer = (ref != null && !ref.isBlank()) ? ref : org;
                     try {
                         if (jsluiceService != null && body != null && !body.isBlank()) {
-                            String referer = rr.request().headerValue("Referer");
                             try { burp.paramamador.util.RefererTracker.record(url, referer); } catch (Throwable ignored) {}
                             jsluiceService.enqueue(url, referer, body, inScope);
                         }
                     } catch (Throwable ignored) {}
-                    jsAnalyzer.extractEndpoints(url, rr.request().headerValue("Referer"), body, inScope);
+                    jsAnalyzer.extractEndpoints(url, referer, body, inScope);
                     processed.add(url);
                     count++;
                 }

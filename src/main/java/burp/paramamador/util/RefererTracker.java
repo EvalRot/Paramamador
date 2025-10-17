@@ -48,16 +48,41 @@ public final class RefererTracker {
                     }
                 }
             }
-            // Load user hosts
+            // Load user hosts (project-specific). If missing, fallback to legacy global file once.
             if (userHostsFile != null) {
                 try {
                     Files.createDirectories(userHostsFile.getParent());
+                    boolean loaded = false;
                     if (Files.isRegularFile(userHostsFile)) {
                         List<String> hosts = Files.readAllLines(userHostsFile, StandardCharsets.UTF_8);
                         for (String h : hosts) {
                             if (h == null) continue;
                             String t = h.trim();
                             if (!t.isEmpty()) USER_HOSTS.add(t);
+                        }
+                        loaded = true;
+                    }
+                    // Legacy migration: read from old global location if present and project file absent
+                    if (!loaded && settings != null && settings.getGlobalExportDir() != null) {
+                        Path legacy = settings.getGlobalExportDir().resolve("paramamador_user_hosts.txt");
+                        if (Files.isRegularFile(legacy)) {
+                            List<String> hosts = Files.readAllLines(legacy, StandardCharsets.UTF_8);
+                            boolean any = false;
+                            for (String h : hosts) {
+                                if (h == null) continue;
+                                String t = h.trim();
+                                if (!t.isEmpty()) { USER_HOSTS.add(t); any = true; }
+                            }
+                            // Persist migrated entries into the new project file
+                            if (any) {
+                                try {
+                                    synchronized (FILE_LOCK) {
+                                        for (String h : USER_HOSTS) {
+                                            Files.writeString(userHostsFile, h + System.lineSeparator(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                                        }
+                                    }
+                                } catch (Throwable ignored) {}
+                            }
                         }
                     }
                 } catch (Throwable ignored) {}

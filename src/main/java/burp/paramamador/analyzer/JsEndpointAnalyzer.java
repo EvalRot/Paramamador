@@ -219,19 +219,19 @@ public class JsEndpointAnalyzer {
 
         store.addOrUpdateEndpoint(value, type, inScope, source, ctx, pattern, notSure, referer);
         // Derive parameter names from query strings in the endpoint and mark them as only-in-code
-        if (value != null) {
-            int q = value.indexOf('?');
-            if (q >= 0 && q + 1 < value.length()) {
-                String qs = value.substring(q + 1);
-                for (String part : qs.split("&")) {
-                    int eq = part.indexOf('=');
-                    String name = eq > 0 ? part.substring(0, eq) : part;
-                    if (!name.isBlank()) {
-                        store.markOnlyInCode(name, pattern);
-                    }
-                }
-            }
-        }
+        // if (value != null) {
+        //     int q = value.indexOf('?');
+        //     if (q >= 0 && q + 1 < value.length()) {
+        //         String qs = value.substring(q + 1);
+        //         for (String part : qs.split("&")) {
+        //             int eq = part.indexOf('=');
+        //             String name = eq > 0 ? part.substring(0, eq) : part;
+        //             if (!name.isBlank()) {
+        //                 store.markOnlyInCode(name, pattern);
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     private static String context(String s, int start, int end) {

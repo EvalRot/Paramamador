@@ -47,7 +47,7 @@ public class Extension implements BurpExtension {
     private final DataStore store = new DataStore();
     private final Settings settings = new Settings();
 
-    private final LinkedBlockingQueue<JsTask> jsQueue = new LinkedBlockingQueue<>(settings.getMaxQueueSize());
+    private LinkedBlockingQueue<JsTask> jsQueue;
     private ExecutorService jsExecutor;
     private ScheduledExecutorService scheduler;
 
@@ -74,12 +74,21 @@ public class Extension implements BurpExtension {
         api.extension().setName("Paramamador");
         log.logToOutput("Paramamador loaded (" + Instant.now() + ")");
 
-        // Prepare worker executors
+        // Load YAML settings early (create with defaults if missing)
+        try {
+            settings.loadFromYamlOrCreate();
+        } catch (Throwable t) {
+            log.logToError("Failed to load YAML settings: " + t.getMessage());
+        }
+
+        // Prepare Fixed thread pool for parallel analysis of heavy JS files (> settings.maxInlineJsKb)
         this.jsExecutor = Executors.newFixedThreadPool(settings.getWorkerThreads(), r -> {
             Thread t = new Thread(r, "paramamador-js-worker");
             t.setDaemon(true);
             return t;
         });
+        // The queue for storing heavy JS files for analysis via jsExecutor
+        this.jsQueue = new LinkedBlockingQueue<>(settings.getMaxQueueSize());
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "paramamador-scheduler");
             t.setDaemon(true);
@@ -325,33 +334,104 @@ public class Extension implements BurpExtension {
     }
 
     private void createStartupSnapshots() {
+        // Look for existing snapshot files in exportDir. Use them if exactly one exists per group.
+        // If multiple exist in a group, merge only that group into a single file and delete the old ones.
+        // If none exist in a group, create a fresh file for that group.
         try {
             IOUtils.ensureDir(settings.getExportDir());
         } catch (java.io.IOException ioe) {
             throw new RuntimeException(ioe);
         }
+
         String base = settings.getSnapshotNamePrefix();
-        if (base == null || base.isBlank()) base = safeProjectName();
+        if (base == null || base.isBlank()) base = settings.getLastProjectName();
+        if (base == null || base.isBlank()) base = "project";
         String ts = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        java.nio.file.Path params = settings.getExportDir().resolve("paramamador_" + base + "_" + ts + "_parameters.json");
-        java.nio.file.Path endpoints = settings.getExportDir().resolve("paramamador_" + base + "_" + ts + "_endpoints.json");
-        try {
-            store.saveToDisk(params, endpoints);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+
+        java.nio.file.Path dir = settings.getExportDir();
+        java.util.List<java.nio.file.Path> paramFiles = new java.util.ArrayList<>();
+        java.util.List<java.nio.file.Path> endpointFiles = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(dir)) {
+            if (stream != null) {
+                stream.filter(p -> p != null && java.nio.file.Files.isRegularFile(p) && p.getFileName() != null)
+                        .forEach(p -> {
+                            String name = p.getFileName().toString();
+                            if (name.startsWith("paramamador_") && name.endsWith("_parameters.json")) {
+                                paramFiles.add(p);
+                            } else if (name.startsWith("paramamador_") && name.endsWith("_endpoints.json")) {
+                                endpointFiles.add(p);
+                            }
+                        });
+            }
+        } catch (Throwable ignored) {}
+
+        // Decide output files for each group independently
+        java.nio.file.Path paramsOut;
+        java.nio.file.Path endpointsOut;
+
+        // Parameters group handling
+        if (paramFiles.size() == 1) {
+            paramsOut = paramFiles.get(0);
+        } else if (paramFiles.size() > 1) {
+            paramsOut = dir.resolve("paramamador_" + base + "_" + ts + "_parameters.json");
+            try {
+                DataStore mergeParams = new DataStore();
+                mergeParams.loadFromFiles(paramFiles);
+                mergeParams.saveToDisk(paramsOut, null);
+                for (java.nio.file.Path p : paramFiles) {
+                    try { if (!p.equals(paramsOut)) java.nio.file.Files.deleteIfExists(p); } catch (Throwable ignored) {}
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            // none found: create fresh empty parameters file
+            paramsOut = dir.resolve("paramamador_" + base + "_" + ts + "_parameters.json");
+            try {
+                new DataStore().saveToDisk(paramsOut, null);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
         }
-        // Remember current session snapshot targets for subsequent autosaves
-        settings.setCurrentParametersFile(params);
-        settings.setCurrentEndpointsFile(endpoints);
+
+        // Endpoints group handling
+        if (endpointFiles.size() == 1) {
+            endpointsOut = endpointFiles.get(0);
+        } else if (endpointFiles.size() > 1) {
+            endpointsOut = dir.resolve("paramamador_" + base + "_" + ts + "_endpoints.json");
+            try {
+                DataStore mergeEndpoints = new DataStore();
+                mergeEndpoints.loadFromFiles(endpointFiles);
+                mergeEndpoints.saveToDisk(null, endpointsOut);
+                for (java.nio.file.Path p : endpointFiles) {
+                    try { if (!p.equals(endpointsOut)) java.nio.file.Files.deleteIfExists(p); } catch (Throwable ignored) {}
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            // none found: create fresh empty endpoints file
+            endpointsOut = dir.resolve("paramamador_" + base + "_" + ts + "_endpoints.json");
+            try {
+                new DataStore().saveToDisk(null, endpointsOut);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        settings.setCurrentParametersFile(paramsOut);
+        settings.setCurrentEndpointsFile(endpointsOut);
     }
 
     private void showInitialSetupDialog() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             try {
                 JTextField nameField = new JTextField();
-                String suggested = safeProjectName();
+                String suggested = "";
                 if (settings.getSnapshotNamePrefix() != null && !settings.getSnapshotNamePrefix().isBlank()) {
                     suggested = settings.getSnapshotNamePrefix();
+                } else if (settings.getLastProjectName() != null && !settings.getLastProjectName().isBlank()) {
+                    suggested = settings.getLastProjectName();
                 }
                 nameField.setText(suggested);
 
@@ -380,7 +460,7 @@ public class Extension implements BurpExtension {
                 });
 
                 JCheckBox loadPrev = new JCheckBox("Load previous results from export directory");
-                loadPrev.setSelected(false);
+                loadPrev.setSelected(settings.isLoadPreviousOnStartup());
 
                 JCheckBox enableJsluice = new JCheckBox("Enable AST scanning with jsluice");
                 enableJsluice.setSelected(settings.isEnableJsluice());
@@ -402,7 +482,7 @@ public class Extension implements BurpExtension {
                 c.insets = new Insets(4,4,4,4);
                 c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1;
                 int row = 0;
-                c.gridx = 0; c.gridy = row; panel.add(new JLabel("Filename base"), c);
+                c.gridx = 0; c.gridy = row; panel.add(new JLabel("Project name"), c);
                 c.gridx = 1; panel.add(nameField, c); row++;
                 c.gridx = 0; c.gridy = row; panel.add(new JLabel("Export directory"), c);
                 JPanel dirPanel = new JPanel(new BorderLayout());
@@ -430,7 +510,10 @@ public class Extension implements BurpExtension {
                 int option = JOptionPane.showConfirmDialog(null, panel, "Paramamador Setup", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
                 if (option == JOptionPane.OK_OPTION) {
                     String baseName = nameField.getText();
-                    if (baseName != null && !baseName.isBlank()) settings.setSnapshotNamePrefix(baseName.trim());
+                    if (baseName != null && !baseName.isBlank()) {
+                        settings.setSnapshotNamePrefix(baseName.trim());
+                        settings.setLastProjectName(baseName.trim());
+                    }
                     String dir = dirField.getText();
                     if (dir != null && !dir.isBlank()) settings.setExportDir(java.nio.file.Paths.get(dir.trim()));
                     String gdir = globalDirField.getText();
@@ -439,6 +522,7 @@ public class Extension implements BurpExtension {
                     settings.setEnableJsluice(enableJsluice.isSelected());
                     String goBin = goBinField.getText();
                     if (goBin != null && !goBin.isBlank()) settings.setGoBinDir(java.nio.file.Paths.get(goBin.trim()));
+                    try { settings.saveToYaml(); } catch (Throwable ignored) {}
                 }
             } catch (Throwable t) {
                 log.logToError("Setup dialog error: " + t.getMessage());
@@ -446,39 +530,7 @@ public class Extension implements BurpExtension {
         });
     }
 
-    private String safeProjectName() {
-        // 1) Try a system property if present (no official Montoya API for project name)
-        String name = null;
-        try { name = System.getProperty("burp.project.name"); } catch (Throwable ignored) {}
-        if (name != null && !name.isBlank()) {
-            return name.replaceAll("[^A-Za-z0-9_-]", "_");
-        }
-
-        // 2) Use first in-scope domain from Site Map
-        try {
-            if (siteMap != null && scope != null) {
-                for (var rr : siteMap.requestResponses()) {
-                    try {
-                        var req = rr.request();
-                        if (req == null) continue;
-                        String url = req.url();
-                        if (url == null || url.isBlank()) continue;
-                        if (!scope.isInScope(url)) continue;
-                        try {
-                            java.net.URI uri = java.net.URI.create(url);
-                            String host = uri.getHost();
-                            if (host != null && !host.isBlank()) {
-                                return host.replaceAll("[^A-Za-z0-9._-]", "_");
-                            }
-                        } catch (Throwable ignored) {}
-                    } catch (Throwable ignored) {}
-                }
-            }
-        } catch (Throwable ignored) {}
-
-        // 3) Fallback
-        return "burp";
-    }
+    // safeProjectName() removed; project name is persisted in YAML (lastProjectName) and set on first initialization.
 
     
 
@@ -509,7 +561,12 @@ public class Extension implements BurpExtension {
 
                 // Detect JS and analyze endpoints
                 String url = response.initiatingRequest() != null ? response.initiatingRequest().url() : "";
-                String referer = response.initiatingRequest() != null ? response.initiatingRequest().headerValue("Referer") : null;
+                String referer = null;
+                if (response.initiatingRequest() != null) {
+                    String ref = response.initiatingRequest().headerValue("Referer");
+                    String origin = response.initiatingRequest().headerValue("Origin");
+                    referer = (ref != null && !ref.isBlank()) ? ref : origin;
+                }
                 String ct = response.headerValue("Content-Type");
                 boolean looksLikeJs = response.mimeType() == MimeType.SCRIPT
                         || (ct != null && ct.toLowerCase().contains("javascript"))

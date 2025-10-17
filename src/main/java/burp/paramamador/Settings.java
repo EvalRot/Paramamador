@@ -1,6 +1,6 @@
 package burp.paramamador;
 
-import java.nio.charset.StandardCharsets;
+//
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -11,6 +11,11 @@ import java.util.List;
 import java.util.Map;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.nio.charset.StandardCharsets;
+
+// YAML
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.DumperOptions;
 
 /**
  * Runtime settings for Paramamador with safe defaults.
@@ -35,6 +40,8 @@ public class Settings {
     private volatile Path globalExportDir = Paths.get(System.getProperty("user.home"), ".paramamador");
     private volatile boolean overwriteOnSave = true;
     private volatile String snapshotNamePrefix = null; // optional user-provided base name for JSON filenames
+    // Last project name to prefill on subsequent loads (persisted in YAML); no default
+    private volatile String lastProjectName = null;
     private volatile boolean loadPreviousOnStartup = false; // whether to load prior JSON results on startup
     // Current session snapshot file targets (timestamp-based)
     private volatile Path currentParametersFile = null;
@@ -82,6 +89,8 @@ public class Settings {
 
     public String getSnapshotNamePrefix() { return snapshotNamePrefix; }
     public void setSnapshotNamePrefix(String prefix) { this.snapshotNamePrefix = (prefix == null || prefix.isBlank()) ? null : prefix; }
+    public String getLastProjectName() { return lastProjectName; }
+    public void setLastProjectName(String v) { this.lastProjectName = (v == null || v.isBlank()) ? null : v; }
 
     public Path getCurrentParametersFile() { return currentParametersFile; }
     public void setCurrentParametersFile(Path p) { this.currentParametersFile = p; }
@@ -95,8 +104,8 @@ public class Settings {
     public Path jsluiceResultsDir() { return exportDir.resolve("jsluice").resolve("results"); }
     // JS URL -> Referer URL mapping for Send-to-Repeater defaults
     public Path jsReferersFilePath() { return exportDir.resolve("paramamador_js_referers.tsv"); }
-    // Global list of user-entered Host header values for Send-to-Repeater
-    public Path globalUserHostsFilePath() { return globalExportDir.resolve("paramamador_user_hosts.txt"); }
+    // Per-project list of user-entered Host header values for Send-to-Repeater
+    public Path globalUserHostsFilePath() { return exportDir.resolve("paramamador_user_hosts.txt"); }
 
     // Default values for path variables like :client, :companyCode
     private final Map<String,String> variableDefaults = Collections.synchronizedMap(new LinkedHashMap<>());
@@ -232,6 +241,108 @@ public class Settings {
         String home = System.getProperty("user.home");
         String date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy MM dd"));
         return Paths.get(home, ".paramamador", date);
+    }
+
+    // YAML config persistence (stored under globalExportDir)
+    public Path yamlConfigFilePath() { return globalExportDir.resolve("paramamador_settings.yaml"); }
+
+    @SuppressWarnings("unchecked")
+    public synchronized void loadFromYamlOrCreate() {
+        try {
+            Path file = yamlConfigFilePath();
+            Files.createDirectories(file.getParent());
+            if (!Files.isRegularFile(file)) {
+                // No file yet: write current defaults to YAML
+                saveToYaml();
+                return;
+            }
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            if (content == null || content.isBlank()) return;
+            Yaml yaml = new Yaml();
+            Object root = yaml.load(content);
+            if (!(root instanceof java.util.Map<?,?> map)) return;
+
+            // Helper lambdas for typed extraction
+            java.util.function.Function<String, Object> get = k -> map.getOrDefault(k, null);
+            java.util.function.Function<String, Boolean> getBool = k -> {
+                Object v = get.apply(k);
+                if (v instanceof Boolean b) return b;
+                if (v instanceof String s) return Boolean.parseBoolean(s);
+                if (v instanceof Number n) return n.intValue() != 0;
+                return null;
+            };
+            java.util.function.Function<String, Integer> getInt = k -> {
+                Object v = get.apply(k);
+                if (v instanceof Number n) return n.intValue();
+                if (v instanceof String s) {
+                    try { return Integer.parseInt(s.trim()); } catch (Exception ignored) {}
+                }
+                return null;
+            };
+            java.util.function.Function<String, String> getStr = k -> {
+                Object v = get.apply(k);
+                return v == null ? null : String.valueOf(v);
+            };
+
+            Boolean b;
+            Integer i;
+            String s;
+
+            if ((b = getBool.apply("scopeOnly")) != null) setScopeOnly(b);
+            if ((i = getInt.apply("autoSaveSeconds")) != null) setAutoSaveSeconds(i);
+            if ((i = getInt.apply("maxInlineJsKb")) != null) setMaxInlineJsKb(i);
+            if ((i = getInt.apply("maxQueueSize")) != null) setMaxQueueSize(i);
+            if ((i = getInt.apply("workerThreads")) != null) setWorkerThreads(i);
+
+            if ((s = getStr.apply("exportDir")) != null && !s.isBlank()) setExportDir(Paths.get(s));
+            if ((s = getStr.apply("globalExportDir")) != null && !s.isBlank()) setGlobalExportDir(Paths.get(s));
+
+            if ((b = getBool.apply("overwriteOnSave")) != null) setOverwriteOnSave(b);
+            if ((s = getStr.apply("snapshotNamePrefix")) != null) setSnapshotNamePrefix(s);
+            if ((b = getBool.apply("loadPreviousOnStartup")) != null) setLoadPreviousOnStartup(b);
+
+            if ((b = getBool.apply("enableJsluice")) != null) setEnableJsluice(b);
+            if ((s = getStr.apply("goBinDir")) != null && !s.isBlank()) setGoBinDir(Paths.get(s));
+            if ((i = getInt.apply("jsluiceTimeoutSec")) != null) setJsluiceTimeoutSec(i);
+            if ((i = getInt.apply("jsluiceWorkers")) != null) setJsluiceWorkers(i);
+            if ((i = getInt.apply("maxJsluiceFileMb")) != null) setMaxJsluiceFileMb(i);
+            if ((s = getStr.apply("jsluiceStoreSubdir")) != null && !s.isBlank()) setJsluiceStoreSubdir(s);
+
+            if ((s = getStr.apply("lastProjectName")) != null) setLastProjectName(s);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public synchronized void saveToYaml() {
+        try {
+            java.util.Map<String,Object> m = new java.util.LinkedHashMap<>();
+            m.put("scopeOnly", isScopeOnly());
+            m.put("autoSaveSeconds", getAutoSaveSeconds());
+            m.put("maxInlineJsKb", getMaxInlineJsKb());
+            m.put("maxQueueSize", getMaxQueueSize());
+            m.put("workerThreads", getWorkerThreads());
+            m.put("exportDir", getExportDir() == null ? null : getExportDir().toString());
+            m.put("globalExportDir", getGlobalExportDir() == null ? null : getGlobalExportDir().toString());
+            m.put("overwriteOnSave", isOverwriteOnSave());
+            m.put("snapshotNamePrefix", getSnapshotNamePrefix());
+            m.put("loadPreviousOnStartup", isLoadPreviousOnStartup());
+            m.put("enableJsluice", isEnableJsluice());
+            m.put("goBinDir", getGoBinDir() == null ? null : getGoBinDir().toString());
+            m.put("jsluiceTimeoutSec", getJsluiceTimeoutSec());
+            m.put("jsluiceWorkers", getJsluiceWorkers());
+            m.put("maxJsluiceFileMb", getMaxJsluiceFileMb());
+            m.put("jsluiceStoreSubdir", getJsluiceStoreSubdir());
+            m.put("lastProjectName", getLastProjectName());
+
+            DumperOptions opts = new DumperOptions();
+            opts.setPrettyFlow(true);
+            opts.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+            Yaml yaml = new Yaml(opts);
+            String out = yaml.dump(m);
+            Path file = yamlConfigFilePath();
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, out, StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {}
     }
 
     // Global ignored JS source patterns persistence (substring match against JS URL)

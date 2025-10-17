@@ -3,7 +3,7 @@ package burp.paramamador.datastore;
 import java.time.Instant;
 
 public class EndpointRecord {
-    public enum Type { ABSOLUTE, RELATIVE, TEMPLATE, CONCAT }
+    public enum Type { ABSOLUTE, RELATIVE, TEMPLATE, CONCAT, MANUALLY }
 
     public final String endpointString;
     public final String source; // JS file URL this endpoint was found in
