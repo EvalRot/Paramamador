@@ -2,7 +2,6 @@ package burp.paramamador.ui;
 
 import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.message.requests.HttpRequest;
-import burp.paramamador.util.RefererTracker;
 import java.util.Map;
 
 import javax.swing.*;
@@ -21,10 +20,9 @@ import java.util.function.Consumer;
 public class SendToRepeaterDialog extends JDialog {
     private final JTextArea requestArea = new JTextArea();
     private final JComboBox<String> hostCombo = new JComboBox<>();
-
-    private RefererTracker.HostOption refererOpt;
-    private RefererTracker.HostOption jsOpt;
-    private RefererTracker.HostOption currentOpt;
+    private final String refererUrl;
+    private final String jsUrl;
+    private boolean currentSecure;
     private final Map<String,String> defaultHeaders;
 
     private final Consumer<HttpRequest> sender;
@@ -33,17 +31,16 @@ public class SendToRepeaterDialog extends JDialog {
 
     public SendToRepeaterDialog(Window owner,
                                 String endpointPath,
-                                RefererTracker.HostOption refererOpt,
-                                RefererTracker.HostOption jsOpt,
+                                String refererUrl,
+                                String jsUrl,
                                 Map<String,String> defaultHeaders,
                                 Consumer<HttpRequest> sender,
                                 java.util.function.Function<String,String> latestAuthFinder,
                                 java.util.function.Function<String,String> latestCookieFinder) {
         super(owner, "Send to Repeater", ModalityType.APPLICATION_MODAL);
-        this.refererOpt = refererOpt;
-        this.jsOpt = jsOpt;
+        this.refererUrl = refererUrl;
+        this.jsUrl = jsUrl;
         this.sender = sender;
-        this.currentOpt = (refererOpt != null && refererOpt.isValid()) ? refererOpt : jsOpt;
         this.defaultHeaders = defaultHeaders == null ? java.util.Map.of() : new java.util.LinkedHashMap<>(defaultHeaders);
         this.latestAuthFinder = latestAuthFinder;
         this.latestCookieFinder = latestCookieFinder;
@@ -73,16 +70,12 @@ public class SendToRepeaterDialog extends JDialog {
         // Right: host selector (editable combobox)
         hostCombo.setEditable(true);
         DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
-        if (refererOpt != null && refererOpt.isValid()) model.addElement(refererOpt.host());
-        if (jsOpt != null && jsOpt.isValid()) {
-            // avoid duplicate if same host
-            if (model.getIndexOf(jsOpt.host()) < 0) model.addElement(jsOpt.host());
-        }
-        try {
-            for (String h : RefererTracker.userHosts()) {
-                if (model.getIndexOf(h) < 0) model.addElement(h);
-            }
-        } catch (Throwable ignored) {}
+        HostSelection refSel = parseUrlToHost(refererUrl);
+        HostSelection jsSel = parseUrlToHost(jsUrl);
+        if (refSel.valid && model.getIndexOf(refSel.host) < 0) model.addElement(refSel.host);
+        if (jsSel.valid && model.getIndexOf(jsSel.host) < 0) model.addElement(jsSel.host);
+        // set secure hint from first available
+        this.currentSecure = refSel.valid ? refSel.secure : jsSel.secure;
         hostCombo.setModel(model);
         if (model.getSize() > 0) hostCombo.setSelectedIndex(0);
         JPanel right = new JPanel(new BorderLayout(4,4));
@@ -137,8 +130,10 @@ public class SendToRepeaterDialog extends JDialog {
     }
 
     private String currentHost() {
-        if (refererOpt != null && refererOpt.isValid()) return refererOpt.host();
-        if (jsOpt != null && jsOpt.isValid()) return jsOpt.host();
+        HostSelection refSel = parseUrlToHost(refererUrl);
+        if (refSel.valid) return refSel.host;
+        HostSelection jsSel = parseUrlToHost(jsUrl);
+        if (jsSel.valid) return jsSel.host;
         return "";
     }
 
@@ -155,13 +150,13 @@ public class SendToRepeaterDialog extends JDialog {
     private void updateHostInRequest() {
         String hostTxt = Objects.toString(hostCombo.getEditor().getItem(), "").trim();
         if (hostTxt.isEmpty()) return;
-        // Update current option secure hint from typed value if contains schema
-        RefererTracker.HostOption base = (refererOpt != null && refererOpt.isValid()) ? refererOpt : jsOpt;
-        RefererTracker.HostOption newOpt = RefererTracker.fromUserInput(hostTxt, base);
-        if (newOpt != null) currentOpt = newOpt;
+        // Update current secure hint from typed value if includes scheme
+        HostSelection base = parseUrlToHost(refererUrl).valid ? parseUrlToHost(refererUrl) : parseUrlToHost(jsUrl);
+        HostSelection chosen = parseUserInput(hostTxt, base.secure);
+        this.currentSecure = chosen.secure;
 
         String raw = requestArea.getText();
-        String updated = replaceOrInsertHostHeader(raw, newOpt.host());
+        String updated = replaceOrInsertHostHeader(raw, chosen.host);
         if (!raw.equals(updated)) requestArea.setText(updated);
     }
 
@@ -261,26 +256,62 @@ public class SendToRepeaterDialog extends JDialog {
                 JOptionPane.showMessageDialog(this, "Host cannot be empty.", "Paramamador", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            RefererTracker.HostOption base = (refererOpt != null && refererOpt.isValid()) ? refererOpt : jsOpt;
-            RefererTracker.HostOption chosen = RefererTracker.fromUserInput(hostTxt, base);
-            if (chosen == null || !chosen.isValid()) {
-                JOptionPane.showMessageDialog(this, "Invalid host.", "Paramamador", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-
+            HostSelection base = parseUrlToHost(refererUrl).valid ? parseUrlToHost(refererUrl) : parseUrlToHost(jsUrl);
+            HostSelection chosen = parseUserInput(hostTxt, base.secure);
             String reqRaw = requestArea.getText();
             // Build HttpService using scheme hint
-            boolean secure = chosen.secure();
-            String hostOnly = chosen.host();
+            boolean secure = chosen.secure;
+            String hostOnly = chosen.host;
             // If user put scheme in the header editor, fromUserInput already removed it to host:port
             HttpService service = HttpService.httpService(hostOnly, secure);
             HttpRequest request = HttpRequest.httpRequest(service, reqRaw);
-
-            try { RefererTracker.addUserHost(hostOnly); } catch (Throwable ignored) {}
             sender.accept(request);
             dispose();
         } catch (Throwable t) {
             JOptionPane.showMessageDialog(this, "Failed to send: " + t.getMessage(), "Paramamador", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private static HostSelection parseUrlToHost(String url) {
+        try {
+            if (url == null || url.isBlank()) return HostSelection.invalid();
+            java.net.URI u = java.net.URI.create(url);
+            String host = u.getHost();
+            if (host == null || host.isBlank()) return HostSelection.invalid();
+            int port = u.getPort();
+            boolean secure = false;
+            String scheme = u.getScheme();
+            if (scheme != null) secure = scheme.toLowerCase(java.util.Locale.ROOT).startsWith("https");
+            String hostPort = port > 0 ? host + ":" + port : host;
+            return new HostSelection(hostPort, secure, true);
+        } catch (Throwable ignored) {
+            return HostSelection.invalid();
+        }
+    }
+
+    private static HostSelection parseUserInput(String input, boolean baseSecure) {
+        if (input == null || input.isBlank()) return HostSelection.invalid();
+        String s = input.trim();
+        try {
+            if (s.toLowerCase(java.util.Locale.ROOT).startsWith("http://") || s.toLowerCase(java.util.Locale.ROOT).startsWith("https://")) {
+                java.net.URI u = java.net.URI.create(s);
+                String host = u.getHost();
+                if (host == null || host.isBlank()) return HostSelection.invalid();
+                int port = u.getPort();
+                boolean secure = u.getScheme() != null && u.getScheme().toLowerCase(java.util.Locale.ROOT).startsWith("https");
+                String hostPort = port > 0 ? host + ":" + port : host;
+                return new HostSelection(hostPort, secure, true);
+            }
+            // no scheme, use base hint
+            return new HostSelection(s, baseSecure, true);
+        } catch (Throwable ignored) {
+            return new HostSelection(s, baseSecure, true);
+        }
+    }
+
+    private static class HostSelection {
+        final String host; final boolean secure; final boolean valid;
+        HostSelection(String host, boolean secure, boolean valid) { this.host = host; this.secure = secure; this.valid = valid; }
+        static HostSelection invalid() { return new HostSelection("", false, false); }
     }
 }

@@ -102,10 +102,6 @@ public class Settings {
     public Path jsluiceScannedFilePath() { return exportDir.resolve("paramamador_jsluice_scanned.txt"); }
     public Path jsluiceStoreDir() { return exportDir.resolve(jsluiceStoreSubdir); }
     public Path jsluiceResultsDir() { return exportDir.resolve("jsluice").resolve("results"); }
-    // JS URL -> Referer URL mapping for Send-to-Repeater defaults
-    public Path jsReferersFilePath() { return exportDir.resolve("paramamador_js_referers.tsv"); }
-    // Per-project list of user-entered Host header values for Send-to-Repeater
-    public Path globalUserHostsFilePath() { return exportDir.resolve("paramamador_user_hosts.txt"); }
 
     // Default values for path variables like :client, :companyCode
     private final Map<String,String> variableDefaults = Collections.synchronizedMap(new LinkedHashMap<>());

@@ -5,7 +5,6 @@ import burp.api.montoya.scope.Scope;
 import burp.paramamador.Settings;
 import burp.paramamador.datastore.DataStore;
 import burp.paramamador.datastore.EndpointRecord;
-import burp.paramamador.util.RefererTracker;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
@@ -49,6 +48,7 @@ public class JsluiceService {
     private volatile Path jsluiceBinary;
 
     private static final ConcurrentHashMap<String, String> SCANNED_HASH_TO_URL = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, String> SCANNED_HASH_TO_REFERER = new ConcurrentHashMap<>();
     private static final Object SCANNED_FILE_LOCK = new Object();
     private static final Pattern FULL_URL = Pattern.compile("(?i)(https?://[^\\s\"'<>]+)");
 
@@ -103,6 +103,7 @@ public class JsluiceService {
         if (jsluiceBinary == null) return; // not available
 
         try {
+            // compute hash of the target JS file and put it with the source URL to the HashMap to scan twice
             String hash = sha256Hex(jsBody);
             if (hash == null) return;
             String prev = SCANNED_HASH_TO_URL.putIfAbsent(hash, sourceUrl == null ? "" : sourceUrl);
@@ -114,10 +115,11 @@ public class JsluiceService {
                 return;
             }
 
-            // Persist mapping
-            tryAppendScanned(sourceUrl, hash);
+            // Put mapping (hash, sourceUrl, referer) into the paramamador_jsluice_scanned.txt file
+            tryAppendScanned(hash, sourceUrl, referer);
 
-            // Write file under store dir
+            // Put full content of the scanned JS file inside the jsluice_js dir for further scanning with the jsluice bin. 
+            // Filename = SHA256 hash of the content.
             Path file = settings.jsluiceStoreDir().resolve(hash + ".js");
             if (!Files.isRegularFile(file)) {
                 Files.createDirectories(file.getParent());
@@ -292,11 +294,14 @@ public class JsluiceService {
         }
     }
 
-    private void tryAppendScanned(String url, String hash) {
+    private void tryAppendScanned(String hash, String url, String referer) {
         try {
             Path file = settings.jsluiceScannedFilePath();
             Files.createDirectories(file.getParent());
-            String line = (url == null ? "" : url) + "\t" + hash + System.lineSeparator();
+            String line = (hash == null ? "" : hash)
+                    + "\t" + (url == null ? "" : url)
+                    + "\t" + (referer == null ? "" : referer)
+                    + System.lineSeparator();
             synchronized (SCANNED_FILE_LOCK) {
                 Files.writeString(file, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             }
@@ -314,7 +319,7 @@ public class JsluiceService {
                                 String fileName = p.getFileName().toString();
                                 String hash = fileName.substring(0, Math.max(0, fileName.length() - ".json".length()));
                                 String sourceUrl = SCANNED_HASH_TO_URL.get(hash);
-                                String referer = RefererTracker.getRefererUrl(sourceUrl);
+                                String referer = SCANNED_HASH_TO_REFERER.get(hash);
                                 String ndjson = Files.readString(p, StandardCharsets.UTF_8);
                                 boolean inScope = isUrlInScope(sourceUrl);
                                 if (ndjson != null && !ndjson.isBlank()) {
@@ -335,13 +340,39 @@ public class JsluiceService {
                 if (line == null) continue;
                 String t = line.trim();
                 if (t.isEmpty()) continue;
-                int tab = t.indexOf('\t');
-                if (tab <= 0) continue;
-                String url = t.substring(0, tab);
-                String hash = t.substring(tab + 1).trim();
-                if (!hash.isEmpty()) SCANNED_HASH_TO_URL.putIfAbsent(hash, url);
+                // Support legacy format: "url\t<hash>" and new format: "<hash>\t<url>\t<referer>"
+                String[] parts = t.split("\t");
+                if (parts.length >= 2) {
+                    String hash;
+                    String url;
+                    String referer = null;
+                    if (isLikelyHash(parts[0])) {
+                        hash = parts[0].trim();
+                        url = parts[1].trim();
+                        if (parts.length >= 3) referer = parts[2].trim();
+                    } else if (isLikelyHash(parts[1])) {
+                        url = parts[0].trim();
+                        hash = parts[1].trim();
+                    } else {
+                        continue;
+                    }
+                    if (!hash.isEmpty()) SCANNED_HASH_TO_URL.putIfAbsent(hash, url);
+                    if (referer != null && !referer.isEmpty()) SCANNED_HASH_TO_REFERER.putIfAbsent(hash, referer);
+                }
             }
         } catch (Throwable ignored) {}
+    }
+
+    private static boolean isLikelyHash(String s) {
+        if (s == null) return false;
+        String t = s.trim();
+        if (t.length() < 32) return false;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!hex) return false;
+        }
+        return true;
     }
 
     private Path resolveJsluiceBinary() {

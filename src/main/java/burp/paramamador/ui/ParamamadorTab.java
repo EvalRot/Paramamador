@@ -6,7 +6,6 @@ import burp.paramamador.datastore.EndpointRecord;
 import burp.paramamador.datastore.ParameterRecord;
 import burp.paramamador.integrations.JsluiceService;
 import burp.paramamador.integrations.JsluiceUrlRecord;
-import burp.paramamador.util.RefererTracker;
 import burp.api.montoya.http.message.requests.HttpRequest;
 
 import javax.swing.*;
@@ -797,9 +796,9 @@ public class ParamamadorTab {
         if (rec == null) return;
         String ep = rec.endpointString == null ? "" : rec.endpointString.trim();
         String path = applyVarDefaults(extractPath(ep));
-        RefererTracker.HostOption ref = RefererTracker.refererOption(rec.source);
-        RefererTracker.HostOption js = RefererTracker.jsOption(rec.source);
-        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
+        String refererUrl = rec.referer == null ? "" : rec.referer;
+        String jsUrl = rec.source == null ? "" : rec.source;
+        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, refererUrl, jsUrl, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
         dlg.setVisible(true);
     }
 
@@ -807,9 +806,9 @@ public class ParamamadorTab {
         if (rec == null) return;
         String url = rec.url == null ? "" : rec.url.trim();
         String path = applyVarDefaults(extractPath(url));
-        RefererTracker.HostOption ref = RefererTracker.parseHostOption(rec.refererUrl);
-        RefererTracker.HostOption js = RefererTracker.parseHostOption(rec.sourceJsUrl);
-        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, ref, js, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
+        String refererUrl = rec.refererUrl;
+        String jsUrl = rec.sourceJsUrl;
+        SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, refererUrl, jsUrl, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
         dlg.setVisible(true);
     }
 
@@ -966,7 +965,7 @@ public class ParamamadorTab {
     }
 
     private static class JsluiceTableModel extends AbstractTableModel {
-        private final String[] cols = {"url", "method", "type", "filename", "Referer/Origin", "queryParams", "bodyParams", "contentType", "headers"};
+        private final String[] cols = {"url", "method", "type", "JS Source", "Referer/Origin", "queryParams", "bodyParams", "contentType", "headers"};
         private java.util.List<JsluiceUrlRecord> rows = new java.util.ArrayList<>();
 
         public void setRows(java.util.List<JsluiceUrlRecord> r) { this.rows = new java.util.ArrayList<>(r == null ? java.util.List.of() : r); fireTableDataChanged(); }
@@ -979,7 +978,7 @@ public class ParamamadorTab {
                 case 0 -> r.url == null ? "" : r.url;
                 case 1 -> r.method == null ? "" : r.method;
                 case 2 -> r.type == null ? "" : r.type;
-                case 3 -> r.filename == null ? "" : r.filename;
+                case 3 -> r.sourceJsUrl == null ? "" : r.sourceJsUrl;
                 case 4 -> r.refererUrl == null ? "" : r.refererUrl;
                 case 5 -> r.queryParams == null || r.queryParams.isEmpty() ? "" : String.join(", ", r.queryParams);
                 case 6 -> r.bodyParams == null || r.bodyParams.isEmpty() ? "" : String.join(", ", r.bodyParams);

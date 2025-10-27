@@ -59,7 +59,6 @@ public class SiteTreeScanner {
                     String referer = (ref != null && !ref.isBlank()) ? ref : org;
                     try {
                         if (jsluiceService != null && body != null && !body.isBlank()) {
-                            try { burp.paramamador.util.RefererTracker.record(url, referer); } catch (Throwable ignored) {}
                             jsluiceService.enqueue(url, referer, body, inScope);
                         }
                     } catch (Throwable ignored) {}

@@ -117,12 +117,7 @@ public class Extension implements BurpExtension {
             log.logToError("Failed to load scanned JS list: " + t.getMessage());
         }
 
-        // Initialize referer tracker (for JS URL -> Referer mapping used by Send-to-Repeater UI)
-        try {
-            burp.paramamador.util.RefererTracker.init(settings);
-        } catch (Throwable t) {
-            log.logToError("Failed to init RefererTracker: " + t.getMessage());
-        }
+        // RefererTracker removed; rely on endpoint-level referers and jsluice scanned index
 
         // Load variable defaults for :vars in endpoints
         try {
@@ -573,9 +568,6 @@ public class Extension implements BurpExtension {
                         || (url != null && url.toLowerCase().endsWith(".js"));
 
                 if (looksLikeJs) {
-                    try {
-                        burp.paramamador.util.RefererTracker.record(url, referer);
-                    } catch (Throwable ignored) {}
                     String body = response.bodyToString();
                     int sizeKb = body != null ? body.length() / 1024 : 0;
                     boolean inScope = response.initiatingRequest() != null && response.initiatingRequest().isInScope();
