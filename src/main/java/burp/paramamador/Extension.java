@@ -226,6 +226,47 @@ public class Extension implements BurpExtension {
                         }
                     } catch (Throwable ignored) {}
                     return null;
+                },
+                // Site Map URLs by host (like "Copy URLs in this host")
+                (hostOnly) -> {
+                    java.util.List<String> urls = new java.util.ArrayList<>();
+                    try {
+                        for (var rr : api.siteMap().requestResponses()) {
+                            try {
+                                String url = rr.request().url();
+                                if (url == null || url.isBlank()) continue;
+                                String headerHost = rr.request().headerValue("Host");
+                                String parsedHost = safeParseHostPort(url);
+                                if (hostMatches(headerHost, hostOnly) || hostMatches(parsedHost, hostOnly)) {
+                                    urls.add(url);
+                                }
+                            } catch (Throwable ignored) {}
+                        }
+                    } catch (Throwable ignored) {}
+                    return urls;
+                },
+                // Latest Authorization/Cookie from the same recent request (limit 10) for host
+                (hostOnly) -> {
+                    java.util.Map<String,String> m = new java.util.LinkedHashMap<>();
+                    try {
+                        var list = api.proxy().history();
+                        int seenForHost = 0;
+                        for (int i = list.size() - 1; i >= 0; i--) {
+                            var rr = list.get(i);
+                            String h = rr.request().headerValue("Host");
+                            if (!hostMatches(h, hostOnly)) continue;
+                            seenForHost++;
+                            String cookie = rr.request().headerValue("Cookie");
+                            String auth = rr.request().headerValue("Authorization");
+                            if ((cookie != null && !cookie.isBlank()) || (auth != null && !auth.isBlank())) {
+                                if (cookie != null && !cookie.isBlank()) m.put("Cookie", cookie);
+                                if (auth != null && !auth.isBlank()) m.put("Authorization", auth);
+                                break;
+                            }
+                            if (seenForHost >= 10) break;
+                        }
+                    } catch (Throwable ignored) {}
+                    return m;
                 }
         );
         this.suiteTabReg = ui.registerSuiteTab("paramamador", tab.getComponent());
@@ -284,6 +325,17 @@ public class Extension implements BurpExtension {
         int bi = b.indexOf(':');
         if (bi >= 0) bhost = b.substring(0, bi);
         return ahost.equals(bhost);
+    }
+
+    private static String safeParseHostPort(String url) {
+        try {
+            if (url == null || url.isBlank()) return null;
+            java.net.URI u = java.net.URI.create(url);
+            String h = u.getHost();
+            if (h == null || h.isBlank()) return null;
+            int p = u.getPort();
+            return p > 0 ? h + ":" + p : h;
+        } catch (Throwable t) { return null; }
     }
 
     private void shutdown() {

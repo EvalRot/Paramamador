@@ -35,6 +35,8 @@ public class ParamamadorTab {
     private final java.util.function.Consumer<HttpRequest> repeaterSender;
     private final java.util.function.Function<String,String> lastAuthFinder;
     private final java.util.function.Function<String,String> lastCookieFinder;
+    private final java.util.function.Function<String, java.util.List<String>> siteMapUrlsByHostFetcher;
+    private final java.util.function.Function<String, java.util.Map<String,String>> latestAuthCookieFinder;
 
     private final JPanel root = new JPanel(new BorderLayout());
 
@@ -72,7 +74,9 @@ public class ParamamadorTab {
 
     public ParamamadorTab(DataStore store, Settings settings, Runnable rescanAction, Runnable saveAction, JsluiceService jsluiceService, java.util.function.Consumer<HttpRequest> repeaterSender,
                           java.util.function.Function<String,String> lastAuthFinder,
-                          java.util.function.Function<String,String> lastCookieFinder) {
+                          java.util.function.Function<String,String> lastCookieFinder,
+                          java.util.function.Function<String, java.util.List<String>> siteMapUrlsByHostFetcher,
+                          java.util.function.Function<String, java.util.Map<String,String>> latestAuthCookieFinder) {
         this.store = store;
         this.settings = settings;
         this.rescanAction = rescanAction;
@@ -81,6 +85,8 @@ public class ParamamadorTab {
         this.repeaterSender = repeaterSender;
         this.lastAuthFinder = lastAuthFinder;
         this.lastCookieFinder = lastCookieFinder;
+        this.siteMapUrlsByHostFetcher = siteMapUrlsByHostFetcher;
+        this.latestAuthCookieFinder = latestAuthCookieFinder;
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Parameters", buildParametersPanel());
@@ -345,6 +351,9 @@ public class ParamamadorTab {
             }
         });
         endpointPopup.add(endpointSendRepeater);
+        JMenuItem endpointRunHttpx = new JMenuItem("Run httpx (spread endpoints)");
+        endpointRunHttpx.addActionListener(e -> runHttpxForEndpointSelection());
+        endpointPopup.add(endpointRunHttpx);
         JMenuItem endpointFalsePosItem = new JMenuItem("Mark as False Positive");
         endpointFalsePosItem.addActionListener(e -> {
             int[] rows = endpointTable.getSelectedRows();
@@ -606,6 +615,9 @@ public class ParamamadorTab {
         });
         jsluicePopup.add(jCopyItem);
         jsluicePopup.add(jSendItem);
+        JMenuItem jHttpxItem = new JMenuItem("Run httpx (spread endpoints)");
+        jHttpxItem.addActionListener(e -> runHttpxForJsluiceSelection());
+        jsluicePopup.add(jHttpxItem);
         jsluiceTable.setComponentPopupMenu(jsluicePopup);
         jsluiceTable.addMouseListener(new MouseAdapter() {
             private void adjustSelection(MouseEvent e) {
@@ -809,6 +821,253 @@ public class ParamamadorTab {
         String refererUrl = rec.refererUrl;
         String jsUrl = rec.sourceJsUrl;
         SendToRepeaterDialog dlg = new SendToRepeaterDialog(SwingUtilities.getWindowAncestor(root), path, refererUrl, jsUrl, settings.getDefaultHeaders(), repeaterSender, lastAuthFinder, lastCookieFinder);
+        dlg.setVisible(true);
+    }
+
+    // ---- httpx integration popups ----
+    private void runHttpxForEndpointSelection() {
+        try {
+            int[] rows = endpointTable.getSelectedRows();
+            if (rows == null || rows.length == 0) {
+                JOptionPane.showMessageDialog(root, "No endpoints selected.", "Paramamador", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            java.util.Set<String> endpoints = new java.util.LinkedHashSet<>();
+            java.util.LinkedHashSet<String> hosts = new java.util.LinkedHashSet<>();
+            for (int r : rows) {
+                int m = endpointTable.convertRowIndexToModel(r);
+                EndpointRecord rec = endpointModel.rows.get(m);
+                if (rec == null) continue;
+                if (rec.endpointString != null && !rec.endpointString.isBlank()) endpoints.add(rec.endpointString.trim());
+                String ref = rec.referer == null ? "" : rec.referer.trim();
+                String host = extractHostPort(ref);
+                if (host != null && !host.isBlank()) hosts.add(host);
+            }
+            if (endpoints.isEmpty() || hosts.isEmpty()) {
+                JOptionPane.showMessageDialog(root, "Need endpoints and referer host.", "Paramamador", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            runHttpxWithInputs(endpoints, hosts);
+        } catch (Throwable t) {
+            JOptionPane.showMessageDialog(root, "httpx prep failed: " + t.getMessage(), "Paramamador", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void runHttpxForJsluiceSelection() {
+        try {
+            int[] rows = jsluiceTable.getSelectedRows();
+            if (rows == null || rows.length == 0) {
+                JOptionPane.showMessageDialog(root, "No URLs selected.", "Paramamador", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            java.util.Set<String> endpoints = new java.util.LinkedHashSet<>();
+            java.util.LinkedHashSet<String> hosts = new java.util.LinkedHashSet<>();
+            for (int r : rows) {
+                int m = jsluiceTable.convertRowIndexToModel(r);
+                JsluiceUrlRecord rec = jsluiceModel.rows.get(m);
+                if (rec == null) continue;
+                if (rec.url != null && !rec.url.isBlank()) endpoints.add(rec.url.trim());
+                String ref = rec.refererUrl == null ? "" : rec.refererUrl.trim();
+                String host = extractHostPort(ref);
+                if (host != null && !host.isBlank()) hosts.add(host);
+            }
+            if (endpoints.isEmpty() || hosts.isEmpty()) {
+                JOptionPane.showMessageDialog(root, "Need URLs and referer host.", "Paramamador", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            runHttpxWithInputs(endpoints, hosts);
+        } catch (Throwable t) {
+            JOptionPane.showMessageDialog(root, "httpx prep failed: " + t.getMessage(), "Paramamador", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void runHttpxWithInputs(java.util.Set<String> endpoints, java.util.LinkedHashSet<String> hosts) throws Exception {
+        // 1) Collect SiteMap URLs for each host and explode into base candidates
+        java.util.Set<String> baseCandidates = new java.util.LinkedHashSet<>();
+        for (String host : hosts) {
+            java.util.List<String> urls = siteMapUrlsByHostFetcher == null ? java.util.List.of() : siteMapUrlsByHostFetcher.apply(host);
+            if (urls == null) continue;
+            for (String u : urls) {
+                if (u == null || u.isBlank()) continue;
+                for (String b : explodeUrlBases(u)) baseCandidates.add(b);
+            }
+        }
+        if (baseCandidates.isEmpty()) {
+            JOptionPane.showMessageDialog(root, "No Site Map URLs found for the host(s).", "Paramamador", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // 2) Concat endpoints with base candidates and normalize
+        java.util.Set<String> finalUrls = new java.util.LinkedHashSet<>();
+        for (String e : endpoints) {
+            if (e == null || e.isBlank()) continue;
+            String et = e.trim();
+            if (isAbsoluteUrl(et)) {
+                finalUrls.add(normalizeUrl(et));
+                continue;
+            }
+            for (String b : baseCandidates) {
+                finalUrls.add(normalizeUrl(concatUrl(b, et)));
+            }
+        }
+        if (finalUrls.isEmpty()) {
+            JOptionPane.showMessageDialog(root, "No URLs to write.", "Paramamador", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // 3) Save to temp file with random name
+        java.nio.file.Path tmpDir = java.nio.file.Path.of("/tmp");
+        if (!java.nio.file.Files.isDirectory(tmpDir)) tmpDir = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"));
+        String baseName = "paramamador_httpx_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8) + ".txt";
+        java.nio.file.Path inputFile = tmpDir.resolve(baseName);
+        java.nio.file.Files.createDirectories(inputFile.getParent());
+        java.nio.file.Files.write(inputFile, finalUrls, java.nio.charset.StandardCharsets.UTF_8);
+
+        // 4) Prepare output path under exportDir/httpx with same base name
+        java.nio.file.Path outDir = settings.getExportDir().resolve("httpx");
+        try { java.nio.file.Files.createDirectories(outDir); } catch (Throwable ignored) {}
+        java.nio.file.Path outFile = outDir.resolve(baseName);
+
+        // 5) Gather headers from proxy history for the first host with data
+        String chosenHost = hosts.iterator().next();
+        java.util.Map<String,String> hdrs = latestAuthCookieFinder == null ? java.util.Map.of() : latestAuthCookieFinder.apply(chosenHost);
+        String cookieVal = hdrs == null ? null : hdrs.getOrDefault("Cookie", null);
+        String authVal = hdrs == null ? null : hdrs.getOrDefault("Authorization", null);
+
+        // 6) Build command
+        StringBuilder cmd = new StringBuilder();
+        cmd.append("httpx -l ")
+           .append(quotePath(inputFile))
+           .append(" -sc -ct -title -wc -fc 404 -ss -v -system-chrome -t 3 -o ")
+           .append(quotePath(outFile))
+           .append(" -v");
+        if (cookieVal != null && !cookieVal.isBlank()) cmd.append(" -H ").append(quoteHeader("Cookie", cookieVal));
+        if (authVal != null && !authVal.isBlank()) cmd.append(" -H ").append(quoteHeader("Authorization", authVal));
+
+        showHttpxCommandDialog(cmd.toString(), inputFile, outFile, finalUrls.size());
+    }
+
+    private static boolean isAbsoluteUrl(String s) {
+        String l = s.toLowerCase(java.util.Locale.ROOT);
+        return l.startsWith("http://") || l.startsWith("https://");
+    }
+
+    private static String concatUrl(String base, String endpoint) {
+        String b = base;
+        String e = endpoint;
+        if (b.endsWith("/")) b = b.substring(0, b.length()-1);
+        if (!e.startsWith("/")) e = "/" + e;
+        return b + e;
+    }
+
+    private static String normalizeUrl(String url) {
+        try {
+            // Split scheme://authority and path?query
+            String s = url;
+            int schemeIdx = s.indexOf("://");
+            if (schemeIdx < 0) return s;
+            String scheme = s.substring(0, schemeIdx);
+            String rest = s.substring(schemeIdx + 3);
+            int slash = rest.indexOf('/');
+            String authority = slash >= 0 ? rest.substring(0, slash) : rest;
+            String pathQuery = slash >= 0 ? rest.substring(slash) : "/";
+            String path;
+            String query = null;
+            int qpos = pathQuery.indexOf('?');
+            if (qpos >= 0) { path = pathQuery.substring(0, qpos); query = pathQuery.substring(qpos + 1); }
+            else { path = pathQuery; }
+            // collapse duplicate slashes in path
+            path = path.replaceAll("(?<!:)/{2,}", "/");
+            // normalize segments
+            java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+            for (String seg : path.split("/")) {
+                if (seg.isEmpty() || seg.equals(".")) continue;
+                if (seg.equals("..")) { if (!stack.isEmpty()) stack.removeLast(); }
+                else stack.addLast(seg);
+            }
+            StringBuilder normPath = new StringBuilder("/");
+            java.util.Iterator<String> it = stack.iterator();
+            while (it.hasNext()) {
+                normPath.append(it.next());
+                if (it.hasNext()) normPath.append('/');
+            }
+            String out = scheme + "://" + authority + normPath.toString();
+            if (query != null && !query.isBlank()) out += "?" + query;
+            return out;
+        } catch (Throwable ignored) {
+            return url;
+        }
+    }
+
+    private static java.util.List<String> explodeUrlBases(String url) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            java.net.URI u = java.net.URI.create(url);
+            String scheme = u.getScheme();
+            String host = u.getHost();
+            int port = u.getPort();
+            if (scheme == null || host == null) return out;
+            String base = scheme + "://" + host + (port > 0 ? ":" + port : "");
+            String path = u.getRawPath();
+            if (path == null || path.isBlank() || path.equals("/")) {
+                out.add(base);
+                return out;
+            }
+            // Split path and build decreasing variants
+            String[] segs = path.split("/");
+            java.util.List<String> nonEmpty = new java.util.ArrayList<>();
+            for (String s : segs) if (!s.isEmpty()) nonEmpty.add(s);
+            // full to root
+            for (int i = nonEmpty.size(); i >= 1; i--) {
+                String p = "/" + String.join("/", nonEmpty.subList(0, i));
+                out.add(base + p);
+            }
+            out.add(base);
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    private static String extractHostPort(String url) {
+        try {
+            if (url == null || url.isBlank()) return null;
+            java.net.URI u = java.net.URI.create(url);
+            String h = u.getHost();
+            if (h == null || h.isBlank()) return null;
+            int p = u.getPort();
+            return p > 0 ? h + ":" + p : h;
+        } catch (Throwable ignored) { return null; }
+    }
+
+    private static String quotePath(java.nio.file.Path p) {
+        return "\"" + p.toString().replace("\"", "\\\"") + "\"";
+    }
+
+    private static String quoteHeader(String name, String value) {
+        String v = value == null ? "" : value;
+        // collapse CRLF just in case
+        v = v.replace('\r', ' ').replace('\n', ' ');
+        return "\"" + name + ": " + v.replace("\"", "\\\"") + "\"";
+    }
+
+    private void showHttpxCommandDialog(String cmd, java.nio.file.Path inputFile, java.nio.file.Path outFile, int count) {
+        JDialog dlg = new JDialog(SwingUtilities.getWindowAncestor(root), "Paramamador: httpx command", Dialog.ModalityType.APPLICATION_MODAL);
+        dlg.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        dlg.setLayout(new BorderLayout(8,8));
+        String info = "Input (" + count + ") -> " + inputFile + "\nOutput -> " + outFile + "\n\n" + cmd;
+        JTextArea ta = new JTextArea(info);
+        ta.setLineWrap(false);
+        ta.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        JScrollPane sp = new JScrollPane(ta);
+        JButton copy = new JButton("Copy");
+        copy.addActionListener(e -> Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(cmd), null));
+        JButton ok = new JButton("OK");
+        ok.addActionListener(e -> dlg.dispose());
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttons.add(copy); buttons.add(ok);
+        dlg.add(sp, BorderLayout.CENTER);
+        dlg.add(buttons, BorderLayout.SOUTH);
+        dlg.setSize(900, 500);
+        dlg.setLocationRelativeTo(SwingUtilities.getWindowAncestor(root));
         dlg.setVisible(true);
     }
 
