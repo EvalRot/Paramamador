@@ -901,13 +901,16 @@ public class ParamamadorTab {
         java.util.Set<String> finalUrls = new java.util.LinkedHashSet<>();
         for (String e : endpoints) {
             if (e == null || e.isBlank()) continue;
-            String et = e.trim();
-            if (isAbsoluteUrl(et)) {
-                finalUrls.add(normalizeUrl(et));
-                continue;
-            }
-            for (String b : baseCandidates) {
-                finalUrls.add(normalizeUrl(concatUrl(b, et)));
+            String original = e.trim();
+            boolean abs = isAbsoluteUrl(original);
+            String pathWithQuery = applyVarDefaults(extractPath(original));
+            if (abs) {
+                String rebuilt = rebuildAbsoluteWithPath(original, pathWithQuery);
+                finalUrls.add(normalizeUrl(rebuilt));
+            } else {
+                for (String b : baseCandidates) {
+                    finalUrls.add(normalizeUrl(concatUrl(b, pathWithQuery)));
+                }
             }
         }
         if (finalUrls.isEmpty()) {
@@ -918,7 +921,7 @@ public class ParamamadorTab {
         // 3) Save to temp file with random name
         java.nio.file.Path tmpDir = java.nio.file.Path.of("/tmp");
         if (!java.nio.file.Files.isDirectory(tmpDir)) tmpDir = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"));
-        String baseName = "paramamador_httpx_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8) + ".txt";
+        String baseName = "paramamador_httpx_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8) + ".json";
         java.nio.file.Path inputFile = tmpDir.resolve(baseName);
         java.nio.file.Files.createDirectories(inputFile.getParent());
         java.nio.file.Files.write(inputFile, finalUrls, java.nio.charset.StandardCharsets.UTF_8);
@@ -938,9 +941,9 @@ public class ParamamadorTab {
         StringBuilder cmd = new StringBuilder();
         cmd.append("httpx -l ")
            .append(quotePath(inputFile))
-           .append(" -sc -ct -title -wc -fc 404 -ss -v -system-chrome -t 3 -o ")
+           .append(" -sc -ct -title -wc -fc 404 -v -t 3 -j -o ")
            .append(quotePath(outFile))
-           .append(" -v");
+           .append(" -H \"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\"");
         if (cookieVal != null && !cookieVal.isBlank()) cmd.append(" -H ").append(quoteHeader("Cookie", cookieVal));
         if (authVal != null && !authVal.isBlank()) cmd.append(" -H ").append(quoteHeader("Authorization", authVal));
 
@@ -997,6 +1000,22 @@ public class ParamamadorTab {
         } catch (Throwable ignored) {
             return url;
         }
+    }
+
+    private static String rebuildAbsoluteWithPath(String url, String newPathWithQuery) {
+        try {
+            if (url == null || url.isBlank()) return url;
+            String s = url;
+            int schemeIdx = s.indexOf("://");
+            if (schemeIdx < 0) return url;
+            String scheme = s.substring(0, schemeIdx);
+            String rest = s.substring(schemeIdx + 3);
+            int slash = rest.indexOf('/');
+            String authority = slash >= 0 ? rest.substring(0, slash) : rest;
+            String p = newPathWithQuery == null || newPathWithQuery.isBlank() ? "/" : newPathWithQuery.trim();
+            if (!p.startsWith("/")) p = "/" + p;
+            return scheme + "://" + authority + p;
+        } catch (Throwable ignored) { return url; }
     }
 
     private static java.util.List<String> explodeUrlBases(String url) {
