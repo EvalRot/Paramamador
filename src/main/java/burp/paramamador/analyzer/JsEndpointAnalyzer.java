@@ -202,7 +202,7 @@ public class JsEndpointAnalyzer {
                 String pathOnly = value;
                 int qpos = pathOnly.indexOf('?');
                 if (qpos >= 0) pathOnly = pathOnly.substring(0, qpos);
-                if (pathOnly.matches(".*[\u0028\u0029\u0024\u0027\u002B\u002C\u0040\u007E\u003C\u003E\u0026\u003D].*")) { // ( ) $ ' + , @ ~ < > & =
+                if (pathOnly.matches(".*[\u0020\u0028\u0029\u0024\u0027\u002B\u002C\u0040\u007E\u003C\u003E\u0026\u003D].*")) { // ( ) $ ' + , @ ~ < > & = SPACE_CHAR
                     notSure = true;
                 }
             }

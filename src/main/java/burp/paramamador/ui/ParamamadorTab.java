@@ -1036,8 +1036,27 @@ public class ParamamadorTab {
             String[] segs = path.split("/");
             java.util.List<String> nonEmpty = new java.util.ArrayList<>();
             for (String s : segs) if (!s.isEmpty()) nonEmpty.add(s);
-            // full to root
-            for (int i = nonEmpty.size(); i >= 1; i--) {
+            // Drop any segment that contains the literal "u0022" (noise from encoded quotes in JS)
+            java.util.List<String> cleaned = new java.util.ArrayList<>();
+            for (String seg : nonEmpty) {
+                String lseg = seg.toLowerCase(java.util.Locale.ROOT);
+                if (lseg.contains("u0022")) continue; // skip such segment entirely
+                cleaned.add(seg);
+            }
+            nonEmpty = cleaned;
+            // If last segment looks like a static asset (.js, .gif, .jpg, .png, .ico, .css, .woff, .woff2, .ttf, .svg),
+            // drop it before generating bases
+            int end = nonEmpty.size();
+            if (end > 0) {
+                String last = nonEmpty.get(end - 1).toLowerCase(java.util.Locale.ROOT);
+                if (last.endsWith(".js") || last.endsWith(".gif") || last.endsWith(".jpg") || last.endsWith(".png")
+                        || last.endsWith(".ico") || last.endsWith(".css") || last.endsWith(".woff") || last.endsWith(".woff2")
+                        || last.endsWith(".ttf") || last.endsWith(".svg")) {
+                    end = end - 1;
+                }
+            }
+            // from (possibly trimmed) full path to root
+            for (int i = end; i >= 1; i--) {
                 String p = "/" + String.join("/", nonEmpty.subList(0, i));
                 out.add(base + p);
             }
