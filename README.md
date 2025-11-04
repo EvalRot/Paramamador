@@ -43,21 +43,16 @@ On first start, the extension asks for:
 
 - Project name
   - Used as a base for result file names.
-
 - Export directory
   - Default: `HOME_DIR/.paramamador + DateTime`.
   - Project-specific folder for all results.
-
 - Global export directory
   - Default: `HOME_DIR/.paramamador`.
   - Global settings shared between projects.
-
 - Load previous results from export directory
   - If checked, the extension loads existing `.json` results on startup.
-
 - Enable AST scanning with jsluice
   - If checked, the extension enables scanning JS via `jsluice`.
-
 - Go bin directory (optional)
   - Path to `$GOPATH/bin` where `httpx` and `jsluice` may be installed.
 
