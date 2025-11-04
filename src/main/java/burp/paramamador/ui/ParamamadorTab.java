@@ -351,7 +351,7 @@ public class ParamamadorTab {
             }
         });
         endpointPopup.add(endpointSendRepeater);
-        JMenuItem endpointRunHttpx = new JMenuItem("Run httpx (spread endpoints)");
+        JMenuItem endpointRunHttpx = new JMenuItem("Run httpx (spray endpoints)");
         endpointRunHttpx.addActionListener(e -> runHttpxForEndpointSelection());
         endpointPopup.add(endpointRunHttpx);
         JMenuItem endpointFalsePosItem = new JMenuItem("Mark as False Positive");
@@ -615,7 +615,7 @@ public class ParamamadorTab {
         });
         jsluicePopup.add(jCopyItem);
         jsluicePopup.add(jSendItem);
-        JMenuItem jHttpxItem = new JMenuItem("Run httpx (spread endpoints)");
+        JMenuItem jHttpxItem = new JMenuItem("Run httpx (spray endpoints)");
         jHttpxItem.addActionListener(e -> runHttpxForJsluiceSelection());
         jsluicePopup.add(jHttpxItem);
         jsluiceTable.setComponentPopupMenu(jsluicePopup);

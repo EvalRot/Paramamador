@@ -21,13 +21,13 @@ import org.yaml.snakeyaml.DumperOptions;
  * Runtime settings for Paramamador with safe defaults.
  */
 public class Settings {
-    private volatile boolean scopeOnly = false;
+    private volatile boolean scopeOnly = true;
     private volatile int autoSaveSeconds = 300;
     private volatile int maxInlineJsKb = 200;
     private volatile int maxQueueSize = 200;
     private volatile int workerThreads = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
     private final List<String> globalIgnoredSources = Collections.synchronizedList(new ArrayList<>(List.of(
-            "jquery", "bootstrap", "google-analytics", "gtag.js", "gpt.js", "segment"
+            "jquery", "bootstrap", "google-analytics", "gtag.js", "gpt.js"
     )));
     // Global values to ignore as endpoints (exact value match), e.g., mime types like "text/plain"
     private final List<String> globalIgnoredValues = Collections.synchronizedList(new ArrayList<>(List.of(
