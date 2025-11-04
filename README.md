@@ -35,33 +35,31 @@ The JAR is created in `build/libs/`.
 
 ### Load in Burp
 
-1) Burp → Extensions → Installed → Add → select the JAR from `build/libs/`.
-
-Tip: Ctrl/⌘ + click the “Loaded” checkbox to quickly reload.
+Burp → Extensions → Installed → Add → select the JAR from `build/libs/`.
 
 ## First Run
 
 On first start, the extension asks for:
 
-### Project name
-- Used as a base for result file names.
+- Project name
+  - Used as a base for result file names.
 
-### Export directory
-- Default: `HOME_DIR/.paramamador + DateTime`.
-- Project-specific folder for all results.
+- Export directory
+  - Default: `HOME_DIR/.paramamador + DateTime`.
+  - Project-specific folder for all results.
 
-### Global export directory
-- Default: `HOME_DIR/.paramamador`.
-- Global settings shared between projects.
+- Global export directory
+  - Default: `HOME_DIR/.paramamador`.
+  - Global settings shared between projects.
 
-### Load previous results from export directory
-- If checked, the extension loads existing `.json` results on startup.
+- Load previous results from export directory
+  - If checked, the extension loads existing `.json` results on startup.
 
-### Enable AST scanning with jsluice
-- If checked, the extension enables scanning JS via `jsluice`.
+- Enable AST scanning with jsluice
+  - If checked, the extension enables scanning JS via `jsluice`.
 
-### Go bin directory (optional)
-- Path to `$GOPATH/bin` where `httpx` and `jsluice` may be installed.
+- Go bin directory (optional)
+  - Path to `$GOPATH/bin` where `httpx` and `jsluice` may be installed.
 
 ## Usage
 
