@@ -103,6 +103,7 @@ public class JsluiceService {
         if (jsluiceBinary == null) return; // not available
 
         try {
+            String refererNorm = originOnly(referer);
             // compute hash of the target JS file and put it with the source URL to the HashMap to scan twice
             String hash = sha256Hex(jsBody);
             if (hash == null) return;
@@ -116,7 +117,7 @@ public class JsluiceService {
             }
 
             // Put mapping (hash, sourceUrl, referer) into the paramamador_jsluice_scanned.txt file
-            tryAppendScanned(hash, sourceUrl, referer);
+            tryAppendScanned(hash, sourceUrl, refererNorm);
 
             // Put full content of the scanned JS file inside the jsluice_js dir for further scanning with the jsluice bin. 
             // Filename = SHA256 hash of the content.
@@ -126,7 +127,7 @@ public class JsluiceService {
                 Files.writeString(file, jsBody, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             }
 
-            boolean offered = queue.offer(new JsluiceTask(sourceUrl, referer, file, hash, inScopeHint));
+            boolean offered = queue.offer(new JsluiceTask(sourceUrl, refererNorm, file, hash, inScopeHint));
             if (!offered) {
                 log.logToOutput("jsluice queue full; dropping: " + sourceUrl);
             }
@@ -194,6 +195,7 @@ public class JsluiceService {
 
     private void parseAndStoreNdjson(String ndjson, String sourceUrl, String referer, boolean inScopeHint) {
         try {
+            String refererNorm = originOnly(referer);
             String[] lines = ndjson.split("\r?\n");
             for (String line : lines) {
                 if (line == null) continue;
@@ -262,7 +264,7 @@ public class JsluiceService {
                 // Keep jsluice endpoints out of main endpoints table; store them in this service only
                 String key = (url == null ? "" : url) + "|" + method + "|" + type + "|" + filename;
                 if (resultKeys.add(key)) {
-                    results.add(new JsluiceUrlRecord(url, qparams, bparams, method, type, filename, contentType, headers, sourceUrl, referer));
+                    results.add(new JsluiceUrlRecord(url, qparams, bparams, method, type, filename, contentType, headers, sourceUrl, refererNorm));
                 }
             }
         } catch (Throwable e) {
@@ -319,7 +321,7 @@ public class JsluiceService {
                                 String fileName = p.getFileName().toString();
                                 String hash = fileName.substring(0, Math.max(0, fileName.length() - ".json".length()));
                                 String sourceUrl = SCANNED_HASH_TO_URL.get(hash);
-                                String referer = SCANNED_HASH_TO_REFERER.get(hash);
+                                String referer = originOnly(SCANNED_HASH_TO_REFERER.get(hash));
                                 String ndjson = Files.readString(p, StandardCharsets.UTF_8);
                                 boolean inScope = isUrlInScope(sourceUrl);
                                 if (ndjson != null && !ndjson.isBlank()) {
@@ -373,6 +375,20 @@ public class JsluiceService {
             if (!hex) return false;
         }
         return true;
+    }
+
+    private static String originOnly(String url) {
+        try {
+            if (url == null || url.isBlank()) return null;
+            java.net.URI u = java.net.URI.create(url);
+            String scheme = u.getScheme();
+            String host = u.getHost();
+            if (scheme == null || host == null || host.isBlank()) return url;
+            int port = u.getPort();
+            return scheme + "://" + host + (port > 0 ? ":" + port : "");
+        } catch (Throwable ignored) {
+            return url;
+        }
     }
 
     private Path resolveJsluiceBinary() {

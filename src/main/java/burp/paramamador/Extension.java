@@ -327,6 +327,20 @@ public class Extension implements BurpExtension {
         return ahost.equals(bhost);
     }
 
+    private static String originOnly(String url) {
+        try {
+            if (url == null || url.isBlank()) return url;
+            java.net.URI u = java.net.URI.create(url);
+            String scheme = u.getScheme();
+            String host = u.getHost();
+            if (scheme == null || host == null || host.isBlank()) return url;
+            int port = u.getPort();
+            return scheme + "://" + host + (port > 0 ? ":" + port : "");
+        } catch (Throwable ignored) {
+            return url;
+        }
+    }
+
     private static String safeParseHostPort(String url) {
         try {
             if (url == null || url.isBlank()) return null;
@@ -623,6 +637,8 @@ public class Extension implements BurpExtension {
                     String body = response.bodyToString();
                     int sizeKb = body != null ? body.length() / 1024 : 0;
                     boolean inScope = response.initiatingRequest() != null && response.initiatingRequest().isInScope();
+                    // Normalize referer to origin (scheme://host[:port])
+                    referer = originOnly(referer);
 
                     // Enqueue for jsluice AST analysis if enabled
                     if (jsluiceService != null && body != null && !body.isBlank()) {

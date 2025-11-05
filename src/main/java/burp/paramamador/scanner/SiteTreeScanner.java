@@ -56,7 +56,7 @@ public class SiteTreeScanner {
                     boolean inScope = rr.request().isInScope();
                     String ref = rr.request().headerValue("Referer");
                     String org = rr.request().headerValue("Origin");
-                    String referer = (ref != null && !ref.isBlank()) ? ref : org;
+                    String referer = originOnly((ref != null && !ref.isBlank()) ? ref : org);
                     try {
                         if (jsluiceService != null && body != null && !body.isBlank()) {
                             jsluiceService.enqueue(url, referer, body, inScope);
@@ -71,5 +71,19 @@ public class SiteTreeScanner {
             }
         }
         log.logToOutput("Rescan complete. Analyzed JS files: " + count);
+    }
+
+    private static String originOnly(String url) {
+        try {
+            if (url == null || url.isBlank()) return url;
+            java.net.URI u = java.net.URI.create(url);
+            String scheme = u.getScheme();
+            String host = u.getHost();
+            if (scheme == null || host == null || host.isBlank()) return url;
+            int port = u.getPort();
+            return scheme + "://" + host + (port > 0 ? ":" + port : "");
+        } catch (Throwable ignored) {
+            return url;
+        }
     }
 }
